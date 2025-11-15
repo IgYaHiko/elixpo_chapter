@@ -15,7 +15,7 @@ import requests
 MODEL_DIR = "models"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-MODEL_PATH = os.path.join(MODEL_DIR, "RealESRGAN_x4plus.pth")
+MODEL_PATH = os.path.join(MODEL_DIR, "realesr-general-x4v3.pth")
 
 # -------------------------------
 # Auto Download Model if Missing
@@ -23,7 +23,7 @@ MODEL_PATH = os.path.join(MODEL_DIR, "RealESRGAN_x4plus.pth")
 def download_model():
     if not os.path.exists(MODEL_PATH):
         print("Downloading Real-ESRGAN model...")
-        url = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.3.0/RealESRGAN_x4plus.pth"
+        url = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth"
 
         response = requests.get(url, stream=True)
         with open(MODEL_PATH, "wb") as f:
@@ -44,7 +44,7 @@ print(f"Using device: {device}")
 # -------------------------------
 # Load Real-ESRGAN Model
 # -------------------------------
-state_dict = torch.load(MODEL_PATH, map_location=device)['params_ema']
+state_dict = torch.load(MODEL_PATH, map_location=device)
 
 model = RRDBNet(
     num_in_ch=3,
@@ -115,7 +115,7 @@ def upscale_b64(b64_image):
 # -------------------------------
 if __name__ == "__main__":
     # test by reading a local file and encoding to b64
-    with open("test.png", "rb") as f:
+    with open("input.png", "rb") as f:
         b64_input = base64.b64encode(f.read()).decode()
 
     result = upscale_b64(b64_input)
