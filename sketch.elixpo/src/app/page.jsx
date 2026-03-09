@@ -1,43 +1,54 @@
 'use client'
 
 import Script from 'next/script'
-import SketchCanvas from '../components/SketchCanvas'
+import Header from '@/components/header/Header'
+import Toolbar from '@/components/toolbar/Toolbar'
+import Footer from '@/components/footer/Footer'
+import AppMenu from '@/components/menu/AppMenu'
+import ShortcutsModal from '@/components/modals/ShortcutsModal'
+import SaveModal from '@/components/modals/SaveModal'
+import RectangleSidebar from '@/components/sidebars/RectangleSidebar'
+import CircleSidebar from '@/components/sidebars/CircleSidebar'
+import LineSidebar from '@/components/sidebars/LineSidebar'
+import ArrowSidebar from '@/components/sidebars/ArrowSidebar'
+import PaintbrushSidebar from '@/components/sidebars/PaintbrushSidebar'
+import TextSidebar from '@/components/sidebars/TextSidebar'
+import FrameSidebar from '@/components/sidebars/FrameSidebar'
+import IconSidebar from '@/components/sidebars/IconSidebar'
+import SVGCanvas from '@/components/canvas/SVGCanvas'
+import useKeyboardShortcuts from '@/hooks/useKeyboardShortcuts'
 
 export default function Home() {
+  useKeyboardShortcuts()
+
   return (
-    <>
-      {/* CDN libraries loaded first */}
-      <Script src="https://unpkg.com/ionicons@7.1.0/dist/ionicons/ionicons.esm.js" type="module" strategy="beforeInteractive" />
-      <Script src="https://unpkg.com/ionicons@7.1.0/dist/ionicons/ionicons.js" noModule strategy="beforeInteractive" />
+    <div className="relative w-screen h-screen overflow-hidden bg-black">
+      {/* CDN libraries needed by canvas engine (boxicons for toolbar icons, highlight.js for code blocks) */}
       <Script src="https://unpkg.com/boxicons@2.1.4/dist/boxicons.js" strategy="beforeInteractive" />
       <Script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js" strategy="beforeInteractive" />
-      <Script src="https://unpkg.com/konva@9/konva.min.js" strategy="beforeInteractive" />
-      <Script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js" strategy="beforeInteractive" />
-      <Script src="https://cdnjs.cloudflare.com/ajax/libs/paper.js/0.12.18/paper-full.min.js" strategy="beforeInteractive" />
 
-      <SketchCanvas />
+      {/* UI Shell */}
+      <Header />
+      <Toolbar />
 
-      {/* App scripts — order matters */}
-      <Script src="/JS/imports.js" type="module" strategy="afterInteractive" />
-      <Script src="/JS/sketchGeneric.js" strategy="afterInteractive" />
-      <Script src="/JS/eventListeners.js" type="module" strategy="afterInteractive" />
-      <Script src="/JS/drawCircle.js" type="module" strategy="afterInteractive" />
-      <Script src="/JS/drawSquare.js" type="module" strategy="afterInteractive" />
-      <Script src="/JS/imageTool.js" type="module" strategy="afterInteractive" />
-      <Script src="/JS/lineTool.js" type="module" strategy="afterInteractive" />
-      <Script src="/JS/canvasStroke.js" type="module" strategy="afterInteractive" />
-      <Script src="/JS/writeText.js" type="module" strategy="afterInteractive" />
-      <Script src="/JS/writeCode.js" type="module" strategy="afterInteractive" />
-      <Script src="/JS/drawArrow.js" type="module" strategy="afterInteractive" />
-      <Script src="/JS/frameHolder.js" type="module" strategy="afterInteractive" />
-      <Script src="/JS/icons.js" type="module" strategy="afterInteractive" />
-      <Script src="/JS/undoAndRedo.js" type="module" strategy="afterInteractive" />
-      <Script src="/JS/copyAndPaste.js" type="module" strategy="afterInteractive" />
-      <Script src="/JS/zoomFunction.js" strategy="afterInteractive" />
-      <Script src="/JS/selection.js" type="module" strategy="afterInteractive" />
-      <Script src="/JS/laserTool.js" strategy="afterInteractive" />
-      <Script src="/JS/eraserTrail.js" strategy="afterInteractive" />
-      <Script src="/JS/eraserTool.js" strategy="afterInteractive" />
-    </>
+      {/* Sidebars */}
+      <RectangleSidebar />
+      <CircleSidebar />
+      <LineSidebar />
+      <ArrowSidebar />
+      <PaintbrushSidebar />
+      <TextSidebar />
+      <FrameSidebar />
+      <IconSidebar />
+
+      {/* Canvas (initializes engine via useSketchEngine hook) */}
+      <SVGCanvas />
+
+      {/* Overlays */}
+      <Footer />
+      <AppMenu />
+      <ShortcutsModal />
+      <SaveModal />
+    </div>
   )
 }
