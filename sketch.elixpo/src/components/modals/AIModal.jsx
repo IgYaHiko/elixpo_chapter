@@ -64,49 +64,72 @@ function DiagramPreview({ svgMarkup, className }) {
     setZoom(z => Math.max(0.3, Math.min(3, z * delta)))
   }, [])
 
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    el.addEventListener('wheel', handleWheel, { passive: false })
-    return () => el.removeEventListener('wheel', handleWheel)
-  }, [handleWheel])
+  // Use refs to avoid circular useCallback dependencies between move/up/down
+  const handleMouseMoveRef = useRef(null)
+  const handleMouseUpRef = useRef(null)
+
+  handleMouseMoveRef.current = (e) => {
+    if (!isPanningRef.current) return
+    setPan(p => ({ x: p.x + e.clientX - lastPosRef.current.x, y: p.y + e.clientY - lastPosRef.current.y }))
+    lastPosRef.current = { x: e.clientX, y: e.clientY }
+  }
+
+  handleMouseUpRef.current = () => {
+    isPanningRef.current = false
+    document.removeEventListener('mousemove', stableMouseMove)
+    document.removeEventListener('mouseup', stableMouseUp)
+  }
+
+  // Stable references that delegate to the ref — never stale, never recreated
+  const [stableMouseMove] = useState(() => (e) => handleMouseMoveRef.current(e))
+  const [stableMouseUp] = useState(() => () => handleMouseUpRef.current())
 
   const handleMouseDown = useCallback((e) => {
     if (e.button !== 0) return
     isPanningRef.current = true
     lastPosRef.current = { x: e.clientX, y: e.clientY }
     e.preventDefault()
-  }, [])
+    // Attach to document so dragging works even when mouse leaves the preview area
+    document.addEventListener('mousemove', stableMouseMove)
+    document.addEventListener('mouseup', stableMouseUp)
+  }, [stableMouseMove, stableMouseUp])
 
-  const handleMouseMove = useCallback((e) => {
-    if (!isPanningRef.current) return
-    setPan(p => ({ x: p.x + e.clientX - lastPosRef.current.x, y: p.y + e.clientY - lastPosRef.current.y }))
-    lastPosRef.current = { x: e.clientX, y: e.clientY }
-  }, [])
-
-  const handleMouseUp = useCallback(() => { isPanningRef.current = false }, [])
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    el.addEventListener('wheel', handleWheel, { passive: false })
+    return () => {
+      el.removeEventListener('wheel', handleWheel)
+      document.removeEventListener('mousemove', stableMouseMove)
+      document.removeEventListener('mouseup', stableMouseUp)
+    }
+  }, [handleWheel, stableMouseMove, stableMouseUp])
 
   if (!svgMarkup) return null
 
   return (
     <div
       ref={containerRef}
-      className={`rounded-xl bg-[#111] border border-white/[0.06] overflow-hidden cursor-grab active:cursor-grabbing relative select-none ${className || 'w-full h-[clamp(200px,40vh,400px)]'}`}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
+      className={`rounded-xl bg-[#111] border border-white/[0.06] overflow-hidden relative select-none ${className || 'w-full h-[clamp(200px,40vh,400px)]'}`}
     >
       <div
         style={{
+          position: 'absolute',
+          inset: 0,
           transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
           transformOrigin: 'center center',
-          width: '100%', height: '100%',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
+          pointerEvents: 'none',
         }}
         dangerouslySetInnerHTML={{ __html: svgMarkup }}
       />
-      <div className="absolute bottom-2 right-2 flex items-center gap-1 bg-black/50 rounded-lg px-1.5 py-0.5">
+      {/* Transparent overlay to capture all drag/pan events above the SVG */}
+      <div
+        className="absolute inset-0 cursor-grab active:cursor-grabbing"
+        style={{ zIndex: 1 }}
+        onMouseDown={handleMouseDown}
+      />
+      <div className="absolute bottom-2 right-2 flex items-center gap-1 bg-black/50 rounded-lg px-1.5 py-0.5" style={{ zIndex: 2 }}>
         <button onClick={() => setZoom(z => Math.max(0.3, z * 0.8))} className="text-text-dim hover:text-white text-xs px-1">-</button>
         <span className="text-text-dim text-[10px] w-8 text-center">{Math.round(zoom * 100)}%</span>
         <button onClick={() => setZoom(z => Math.min(3, z * 1.2))} className="text-text-dim hover:text-white text-xs px-1">+</button>
@@ -569,7 +592,7 @@ export default function AIModal() {
       <AIToast status={toast.status} message={toast.message} onDismiss={() => setToast({ status: null, message: '' })} />
 
       {aiModalOpen && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center font-[lixFont]" onClick={handleClose}>
+        <div className="fixed inset-0 z-9999 flex items-center justify-center font-[lixFont]" onClick={handleClose}>
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
 
           <div
@@ -677,7 +700,7 @@ export default function AIModal() {
                   />
 
                   {/* Quick examples */}
-                  <div className="mt-3 pt-3 border-t border-white/[0.06]">
+                  <div className="mt-3 pt-3 border-t border-white/6">
                     <p className="text-text-muted text-xs uppercase tracking-wider mb-2">Quick Examples</p>
                     <div className="flex flex-wrap gap-1.5">
                       {[
@@ -695,7 +718,7 @@ export default function AIModal() {
                   </div>
 
                   {/* Place button */}
-                  <div className="mt-auto pt-4">
+                  <div className="mt-auto  pt-2">
                     <div className="flex items-center justify-between">
                       <span className="text-text-dim text-xs">Ctrl + Enter to place</span>
                       <button
@@ -734,7 +757,7 @@ export default function AIModal() {
             isCodeMode && !previewDiagram && !isFrameEdit ? (
               <div className="flex gap-4 h-[calc(100%-100px)]">
                 {/* Left panel - AI prompt + Code editor */}
-                <div className="w-[45%] min-w-[280px] flex flex-col">
+                <div className="w-[45%] min-w-[280px] flex flex-col overflow-y-auto no-scrollbar">
                   {/* AI Prompt Input */}
                   <div className="mb-3">
                     <p className="text-text-muted text-xs uppercase tracking-wider mb-2">
@@ -771,12 +794,17 @@ export default function AIModal() {
                     </div>
                   </div>
 
-                  <p className="text-text-muted text-xs uppercase tracking-wider mb-2">LixScript Code</p>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-text-muted text-xs uppercase tracking-wider">LixScript Code</p>
+                    <a href="/docs" target="_blank" rel="noopener noreferrer" className="text-accent-blue/70 hover:text-accent-blue text-[10px] flex items-center gap-1 transition-colors">
+                      <i className="bx bx-book-open text-xs" />Learn LixScript syntax
+                    </a>
+                  </div>
                   <textarea
                     value={lixCode}
                     onChange={(e) => setLixCode(e.target.value)}
-                    placeholder={'// Write LixScript or use AI above\n\nrect start at 100, 100 size 200x65 {\n  stroke: #4A90D9\n  label: "Start"\n}\n\nrect process at start.x, start.bottom + 160 size 200x65 {\n  stroke: #2ECC71\n  label: "Process"\n}\n\narrow a1 from start.bottom to process.top {\n  stroke: #e0e0e0\n}'}
-                    className="flex-1 bg-surface-dark border border-border rounded-xl px-4 py-3 text-text-primary text-sm leading-relaxed resize-none focus:outline-none focus:border-accent-blue placeholder:text-text-dim font-mono"
+                    placeholder={'// Write LixScript or use AI above\n\nrect start at 200, 60 size 200x65 {\n  stroke: #4A90D9\n  label: "Start"\n}\n\nrect process at start.x, start.bottom + 150 size 200x65 {\n  stroke: #2ECC71\n  label: "Process"\n}\n\narrow a1 from start.bottom to process.top {\n  stroke: #e0e0e0\n}'}
+                    className="flex-1 min-h-[280px] bg-surface-dark border border-border rounded-xl px-4 py-3 text-text-primary text-sm leading-relaxed resize-none focus:outline-none focus:border-accent-blue placeholder:text-text-dim font-mono"
                     autoFocus
                     spellCheck={false}
                     onKeyDown={(e) => {
@@ -798,9 +826,9 @@ export default function AIModal() {
                     <p className="text-text-muted text-xs uppercase tracking-wider mb-2">Quick Examples</p>
                     <div className="flex flex-wrap gap-1.5">
                       {[
-                        { label: 'Flowchart', code: '// Simple flowchart\n$color = #4A90D9\n\nrect start at 100, 50 size 160x55 {\n  stroke: $color\n  label: "Start"\n}\n\nrect process at 100, 165 size 160x55 {\n  stroke: #2ECC71\n  label: "Process"\n}\n\ncircle decision at 100, 310 size 90x90 {\n  stroke: #E74C3C\n  label: "OK?"\n}\n\nrect end at 100, 440 size 160x55 {\n  stroke: #9B59B6\n  label: "End"\n}\n\narrow a1 from start.bottom to process.top {\n  stroke: #e0e0e0\n}\n\narrow a2 from process.bottom to decision.top {\n  stroke: #e0e0e0\n}\n\narrow a3 from decision.bottom to end.top {\n  stroke: #e0e0e0\n  label: "Yes"\n}' },
-                        { label: 'Architecture', code: '// System architecture\n\nrect client at 50, 100 size 140x50 {\n  stroke: #4A90D9\n  fill: #4A90D9\n  fillStyle: solid\n  label: "Client"\n  labelColor: #fff\n}\n\nrect api at 250, 100 size 140x50 {\n  stroke: #2ECC71\n  label: "API Server"\n}\n\nrect db at 450, 100 size 140x50 {\n  stroke: #E74C3C\n  label: "Database"\n}\n\narrow a1 from client.right to api.left {\n  stroke: #888\n  label: "REST"\n}\n\narrow a2 from api.right to db.left {\n  stroke: #888\n  label: "Query"\n}' },
-                        { label: 'Shapes', code: '// Shape showcase\n\nrect r1 at 50, 50 size 120x60 {\n  stroke: #4A90D9\n  label: "Rectangle"\n}\n\ncircle c1 at 250, 50 size 80x80 {\n  stroke: #E74C3C\n  label: "Circle"\n}\n\ntext t1 at 400, 80 {\n  content: "Hello LixScript!"\n  color: #F39C12\n  fontSize: 20\n}\n\nline l1 from 50, 160 to 450, 160 {\n  stroke: #555\n  style: dashed\n}' },
+                        { label: 'Flowchart', code: '// Simple flowchart\n$blue = #4A90D9\n$green = #2ECC71\n$gray = #e0e0e0\n\nrect start at 200, 60 size 200x65 {\n  stroke: $blue\n  label: "Start"\n}\n\nrect process at start.x, start.bottom + 150 size 200x65 {\n  stroke: $green\n  label: "Process"\n}\n\ncircle decision at process.x, process.bottom + 150 size 110x110 {\n  stroke: #E74C3C\n  label: "OK?"\n}\n\nrect end at decision.x, decision.bottom + 150 size 200x65 {\n  stroke: #9B59B6\n  label: "End"\n}\n\narrow a1 from start.bottom to process.top {\n  stroke: $gray\n}\n\narrow a2 from process.bottom to decision.top {\n  stroke: $gray\n}\n\narrow a3 from decision.bottom to end.top {\n  stroke: $gray\n  label: "Yes"\n}' },
+                        { label: 'Architecture', code: '// System architecture\n$gray = #e0e0e0\n\nrect client at 50, 100 size 200x65 {\n  stroke: #4A90D9\n  fill: #4A90D9\n  fillStyle: solid\n  label: "Client"\n  labelColor: #fff\n}\n\nrect api at client.right + 250, client.y size 200x65 {\n  stroke: #2ECC71\n  label: "API Server"\n}\n\nrect db at api.right + 250, api.y size 200x65 {\n  stroke: #E74C3C\n  label: "Database"\n}\n\narrow a1 from client.right to api.left {\n  stroke: $gray\n  label: "REST"\n}\n\narrow a2 from api.right to db.left {\n  stroke: $gray\n  label: "Query"\n}' },
+                        { label: 'Shapes', code: '// Shape showcase\n\nrect r1 at 50, 50 size 200x65 {\n  stroke: #4A90D9\n  label: "Rectangle"\n}\n\ncircle c1 at r1.right + 250, r1.y size 110x110 {\n  stroke: #E74C3C\n  label: "Circle"\n}\n\ntext t1 at c1.right + 250, c1.y {\n  content: "Hello LixScript!"\n  color: #F39C12\n  fontSize: 20\n}\n\nline l1 from 50, 250 to 650, 250 {\n  stroke: #555\n  style: dashed\n}' },
                       ].map((preset) => (
                         <button
                           key={preset.label}
@@ -811,8 +839,8 @@ export default function AIModal() {
                     </div>
                   </div>
 
-                  {/* Place button */}
-                  <div className="mt-auto pt-4">
+                  {/* Place button - sticky at bottom */}
+                  <div className="sticky bottom-0 pt-3 pb-1 mt-3 bg-surface-card border-t border-white/[0.06]">
                     <div className="flex items-center justify-between">
                       <span className="text-text-dim text-xs">Ctrl + Enter to place</span>
                       <button
