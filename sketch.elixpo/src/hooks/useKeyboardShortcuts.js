@@ -11,9 +11,34 @@ export default function useKeyboardShortcuts() {
 
       // Global Ctrl shortcuts (work even when typing)
       if (e.ctrlKey || e.metaKey) {
-        if (key === 's') {
+        if (key === 's' && e.shiftKey) {
           e.preventDefault()
           useUIStore.getState().toggleSaveModal()
+          return
+        }
+        if (key === 's' && !e.shiftKey) {
+          e.preventDefault()
+          // Quick save to localStorage (+ cloud if authenticated)
+          const serializer = window.__sceneSerializer
+          const shapes = window.shapes
+          if (serializer && shapes && shapes.length > 0) {
+            const workspaceName = useUIStore.getState().workspaceName || 'Untitled'
+            const sceneData = serializer.save(workspaceName)
+            try {
+              localStorage.setItem('lixsketch-autosave', JSON.stringify(sceneData))
+              localStorage.setItem('lixsketch-autosave-meta', JSON.stringify({
+                workspaceName,
+                savedAt: Date.now(),
+                shapeCount: shapes.length,
+              }))
+            } catch {}
+            // Show brief visual feedback
+            const el = document.getElementById('save-toast')
+            if (el) {
+              el.classList.remove('hidden')
+              setTimeout(() => el.classList.add('hidden'), 1500)
+            }
+          }
           return
         }
         if (key === '/') {
@@ -30,6 +55,11 @@ export default function useKeyboardShortcuts() {
         if (key === 'e' && e.shiftKey) {
           e.preventDefault()
           useUIStore.getState().toggleExportImageModal()
+          return
+        }
+        if (key === 'f' && !e.shiftKey) {
+          e.preventDefault()
+          useUIStore.getState().toggleFindBar()
           return
         }
       }
@@ -176,6 +206,10 @@ export default function useKeyboardShortcuts() {
             return
           }
           const uiStore = useUIStore.getState()
+          if (uiStore.findBarOpen) {
+            uiStore.closeFindBar()
+            return
+          }
           if (uiStore.commandPaletteOpen) {
             uiStore.toggleCommandPalette()
             return

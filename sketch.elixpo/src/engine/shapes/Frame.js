@@ -24,6 +24,10 @@ class Frame {
         this.height = height;
         this.rotation = options.rotation || 0;
         this.frameName = options.frameName || "Frame";
+        this.fillStyle = options.fillStyle || "transparent"; // 'transparent' | 'solid' | 'grid'
+        this.fillColor = options.fillColor || "#1e1e28";
+        this.gridSize = options.gridSize || 20;
+        this.gridColor = options.gridColor || "rgba(255,255,255,0.06)";
         this.options = {
             stroke: options.stroke || "#555",
             strokeWidth: options.strokeWidth || 1,
@@ -75,6 +79,50 @@ class Frame {
         }
         this.anchors = [];
 
+        // Ensure defs exists for grid pattern
+        let defs = svg.querySelector('defs');
+        if (!defs) {
+            defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+            svg.appendChild(defs);
+        }
+
+        // Determine fill based on fillStyle
+        let fillValue = "transparent";
+        if (this.fillStyle === 'solid') {
+            fillValue = this.fillColor;
+        } else if (this.fillStyle === 'grid') {
+            // Create or update a grid pattern unique to this frame
+            const patternId = `frame-grid-${this.shapeID}`;
+            let pattern = defs.querySelector(`#${patternId}`);
+            if (!pattern) {
+                pattern = document.createElementNS('http://www.w3.org/2000/svg', 'pattern');
+                pattern.setAttribute('id', patternId);
+                pattern.setAttribute('patternUnits', 'userSpaceOnUse');
+                defs.appendChild(pattern);
+            }
+            // Update pattern attributes
+            pattern.setAttribute('x', this.x);
+            pattern.setAttribute('y', this.y);
+            pattern.setAttribute('width', this.gridSize);
+            pattern.setAttribute('height', this.gridSize);
+            // Clear and rebuild pattern content
+            while (pattern.firstChild) pattern.removeChild(pattern.firstChild);
+            // Background fill
+            const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            bgRect.setAttribute('width', this.gridSize);
+            bgRect.setAttribute('height', this.gridSize);
+            bgRect.setAttribute('fill', this.fillColor);
+            pattern.appendChild(bgRect);
+            // Grid lines
+            const gridPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            gridPath.setAttribute('d', `M ${this.gridSize} 0 L 0 0 0 ${this.gridSize}`);
+            gridPath.setAttribute('fill', 'none');
+            gridPath.setAttribute('stroke', this.gridColor);
+            gridPath.setAttribute('stroke-width', '0.5');
+            pattern.appendChild(gridPath);
+            fillValue = `url(#${patternId})`;
+        }
+
         // Create the frame rectangle
         const frameRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
         frameRect.setAttribute("x", this.x);
@@ -83,9 +131,9 @@ class Frame {
         frameRect.setAttribute("height", this.height);
         frameRect.setAttribute("stroke", this.options.stroke);
         frameRect.setAttribute("stroke-width", this.options.strokeWidth);
-        frameRect.setAttribute("fill", this.options.fill);
+        frameRect.setAttribute("fill", fillValue);
         frameRect.setAttribute("opacity", this.options.opacity);
-        frameRect.setAttribute("stroke-dasharray", "5,5"); 
+        frameRect.setAttribute("stroke-dasharray", "5,5");
         frameRect.classList.add("frame-rect");
 
         // Apply rotation
@@ -153,19 +201,22 @@ class Frame {
         const oldFrame = shape.parentFrame;
 
         // Remove from other frames first
-        shapes.forEach(otherFrame => {
-            if (otherFrame.shapeName === 'frame' && otherFrame !== this) {
-                otherFrame.removeShapeFromFrame(shape);
-            }
-        });
+        if (typeof shapes !== 'undefined' && Array.isArray(shapes)) {
+            shapes.forEach(otherFrame => {
+                if (otherFrame.shapeName === 'frame' && otherFrame !== this) {
+                    otherFrame.removeShapeFromFrame(shape);
+                }
+            });
+        }
 
         this.containedShapes.push(shape);
         shape.parentFrame = this;
 
         // Only move to clipped group if not currently being dragged
-        if (shape.group && shape.group.parentNode && !shape.isDraggedOutTemporarily) {
-            shape.group.parentNode.removeChild(shape.group);
-            this.clipGroup.appendChild(shape.group);
+        const el = shape.group || shape.element;
+        if (el && el.parentNode && !shape.isDraggedOutTemporarily) {
+            el.parentNode.removeChild(el);
+            this.clipGroup.appendChild(el);
         }
 
         // For sub-frames, also move their clipGroup into our clipGroup
@@ -186,10 +237,11 @@ class Frame {
             shape.parentFrame = null;
         }
 
-        // Move shape's group back to main SVG if it's in the clipped group
-        if (shape.group && shape.group.parentNode === this.clipGroup) {
-            this.clipGroup.removeChild(shape.group);
-            svg.appendChild(shape.group);
+        // Move shape's group/element back to main SVG if it's in the clipped group
+        const el = shape.group || shape.element;
+        if (el && el.parentNode === this.clipGroup) {
+            this.clipGroup.removeChild(el);
+            svg.appendChild(el);
         }
 
         // For sub-frames, also move their clipGroup back to main SVG
@@ -228,6 +280,7 @@ class Frame {
 
 updateContainedShapes(applyClipping = true) {
     // Check all shapes to see if they should be in this frame
+    if (typeof shapes === 'undefined' || !Array.isArray(shapes)) return;
     shapes.forEach(shape => {
         if (shape !== this) {
             // Skip frames that are larger than or equal to this frame (prevent parent containing child loops)
@@ -238,14 +291,17 @@ updateContainedShapes(applyClipping = true) {
             }
             const isInFrame = this.isShapeInFrame(shape);
             const isAlreadyContained = this.containedShapes.includes(shape);
-            
+
             if (isInFrame && !isAlreadyContained) {
                 this.addShapeToFrame(shape);
                 // Don't apply clipping if we're not supposed to
-                if (!applyClipping && shape.group && shape.group.parentNode === this.clipGroup) {
-                    this.clipGroup.removeChild(shape.group);
-                    svg.appendChild(shape.group);
-                    shape.isDraggedOutTemporarily = true;
+                if (!applyClipping) {
+                    const el = shape.group || shape.element;
+                    if (el && el.parentNode === this.clipGroup) {
+                        this.clipGroup.removeChild(el);
+                        svg.appendChild(el);
+                        shape.isDraggedOutTemporarily = true;
+                    }
                 }
             } else if (!isInFrame && isAlreadyContained) {
                 this.removeShapeFromFrame(shape);
@@ -336,11 +392,12 @@ move(dx, dy) {
     destroy() {
         // Release contained shapes back to main SVG as individual shapes
         [...this.containedShapes].forEach(shape => {
-            if (shape.group) {
-                if (shape.group.parentNode === this.clipGroup) {
-                    this.clipGroup.removeChild(shape.group);
+            const el = shape.group || shape.element;
+            if (el) {
+                if (el.parentNode === this.clipGroup) {
+                    this.clipGroup.removeChild(el);
                 }
-                svg.appendChild(shape.group);
+                svg.appendChild(el);
             }
             // For sub-frames, also release their clipGroup back to main SVG
             if (shape.shapeName === 'frame' && shape.clipGroup) {
@@ -1136,9 +1193,10 @@ startLabelEdit(labelElement) {
     temporarilyRemoveFromFrame(shape) {
     if (shape && shape.parentFrame === this) {
         // Move shape back to main SVG temporarily (without removing from containedShapes array)
-        if (shape.group && shape.group.parentNode === this.clipGroup) {
-            this.clipGroup.removeChild(shape.group);
-            svg.appendChild(shape.group);
+        const el = shape.group || shape.element;
+        if (el && el.parentNode === this.clipGroup) {
+            this.clipGroup.removeChild(el);
+            svg.appendChild(el);
         }
         shape.isDraggedOutTemporarily = true;
     }
@@ -1148,9 +1206,10 @@ startLabelEdit(labelElement) {
 restoreToFrame(shape) {
     if (shape && shape.parentFrame === this && shape.isDraggedOutTemporarily) {
         // Move shape back to clipped group
-        if (shape.group && shape.group.parentNode === svg) {
-            svg.removeChild(shape.group);
-            this.clipGroup.appendChild(shape.group);
+        const el = shape.group || shape.element;
+        if (el && el.parentNode === svg) {
+            svg.removeChild(el);
+            this.clipGroup.appendChild(el);
         }
         delete shape.isDraggedOutTemporarily;
     }
@@ -1229,11 +1288,12 @@ restoreToFrame(shape) {
     destroy() {
         // Release contained shapes back to main SVG as individual shapes
         [...this.containedShapes].forEach(shape => {
-            if (shape.group) {
-                if (shape.group.parentNode === this.clipGroup) {
-                    this.clipGroup.removeChild(shape.group);
+            const el = shape.group || shape.element;
+            if (el) {
+                if (el.parentNode === this.clipGroup) {
+                    this.clipGroup.removeChild(el);
                 }
-                svg.appendChild(shape.group);
+                svg.appendChild(el);
             }
             // For sub-frames, also release their clipGroup back to main SVG
             if (shape.shapeName === 'frame' && shape.clipGroup) {
