@@ -1,13 +1,18 @@
 /**
  * SnapGuides - Shows thin red alignment guides when moving shapes
- * to help users align shapes with each other.
+ * to help users align shapes with each other and the viewport.
  */
 
-const SNAP_THRESHOLD = 10; // pixels in canvas coords
+const SNAP_THRESHOLD = 6; // pixels — how close before snapping
+const BREAK_THRESHOLD = 12; // pixels — how far mouse must move to break free
 const GUIDE_COLOR = '#ff4444';
 const GUIDE_WIDTH = 1;
 
 let guideLayer = null;
+
+// Track active snaps so we can implement break-out
+let activeSnapX = null; // { guideValue, mouseAtSnap }
+let activeSnapY = null;
 
 function ensureGuideLayer() {
     if (guideLayer && guideLayer.parentNode) return guideLayer;
@@ -82,7 +87,6 @@ function getShapeBounds(shape) {
             cy: bbox.y + bbox.height / 2,
         };
     }
-    // Lines / arrows — use start/end points
     if (name === 'line' || name === 'arrow') {
         const sx = shape.startPoint?.x ?? 0;
         const sy = shape.startPoint?.y ?? 0;
@@ -101,10 +105,40 @@ function getShapeBounds(shape) {
 }
 
 /**
- * Calculate snap offsets and draw guides.
- * Call this during shape drag. Returns { dx, dy } snap offset to apply.
+ * Get the canvas viewport reference points for global alignment.
  */
-export function calculateSnap(movingShape) {
+function getCanvasGuides() {
+    const vb = window.currentViewBox;
+    if (!vb) return [];
+
+    return [
+        { // Viewport center
+            left: vb.x + vb.width / 2,
+            top: vb.y + vb.height / 2,
+            right: vb.x + vb.width / 2,
+            bottom: vb.y + vb.height / 2,
+            cx: vb.x + vb.width / 2,
+            cy: vb.y + vb.height / 2,
+        },
+        { // Viewport edges
+            left: vb.x,
+            top: vb.y,
+            right: vb.x + vb.width,
+            bottom: vb.y + vb.height,
+            cx: vb.x + vb.width / 2,
+            cy: vb.y + vb.height / 2,
+        },
+    ];
+}
+
+/**
+ * Calculate snap offsets and draw guides.
+ * Returns { dx, dy } snap offset to apply.
+ *
+ * Uses a break-out system: once snapped, the shape stays on the guide
+ * until the mouse moves BREAK_THRESHOLD away, then it breaks free.
+ */
+export function calculateSnap(movingShape, shiftKey = false, mouseX, mouseY) {
     clearGuides();
 
     const shapes = window.shapes;
@@ -113,12 +147,23 @@ export function calculateSnap(movingShape) {
     const moving = getShapeBounds(movingShape);
     if (!moving) return { dx: 0, dy: 0 };
 
+    // Check if we should break out of an active snap
+    if (activeSnapX && mouseX !== undefined) {
+        if (Math.abs(mouseX - activeSnapX.mouseAtSnap) > BREAK_THRESHOLD) {
+            activeSnapX = null;
+        }
+    }
+    if (activeSnapY && mouseY !== undefined) {
+        if (Math.abs(mouseY - activeSnapY.mouseAtSnap) > BREAK_THRESHOLD) {
+            activeSnapY = null;
+        }
+    }
+
     let snapX = null;
     let snapY = null;
     let bestDistX = SNAP_THRESHOLD;
     let bestDistY = SNAP_THRESHOLD;
 
-    // Edges and centers to check for the moving shape
     const movingXs = [moving.left, moving.cx, moving.right];
     const movingYs = [moving.top, moving.cy, moving.bottom];
 
@@ -128,18 +173,19 @@ export function calculateSnap(movingShape) {
     const extendX1 = vb ? vb.x : 0;
     const extendX2 = vb ? vb.x + vb.width : 10000;
 
+    let otherShapeCount = 0;
+
     for (const shape of shapes) {
         if (shape === movingShape) continue;
-        // Skip shapes in multi-selection being dragged
         if (window.multiSelection && window.multiSelection.selectedShapes?.has(shape)) continue;
 
         const other = getShapeBounds(shape);
         if (!other) continue;
+        otherShapeCount++;
 
         const otherXs = [other.left, other.cx, other.right];
         const otherYs = [other.top, other.cy, other.bottom];
 
-        // Check vertical alignment (X axis snap)
         for (const mx of movingXs) {
             for (const ox of otherXs) {
                 const dist = Math.abs(mx - ox);
@@ -150,7 +196,6 @@ export function calculateSnap(movingShape) {
             }
         }
 
-        // Check horizontal alignment (Y axis snap)
         for (const my of movingYs) {
             for (const oy of otherYs) {
                 const dist = Math.abs(my - oy);
@@ -162,24 +207,67 @@ export function calculateSnap(movingShape) {
         }
     }
 
+    // Viewport guides when alone, no snap found, or shift held
+    if (shiftKey || otherShapeCount === 0 || (!snapX && !snapY)) {
+        const canvasGuides = getCanvasGuides();
+        for (const guide of canvasGuides) {
+            const guideXs = [guide.left, guide.cx, guide.right];
+            const guideYs = [guide.top, guide.cy, guide.bottom];
+
+            for (const mx of movingXs) {
+                for (const gx of guideXs) {
+                    const dist = Math.abs(mx - gx);
+                    if (dist < bestDistX) {
+                        bestDistX = dist;
+                        snapX = { offset: gx - mx, x: gx, extendY1, extendY2 };
+                    }
+                }
+            }
+            for (const my of movingYs) {
+                for (const gy of guideYs) {
+                    const dist = Math.abs(my - gy);
+                    if (dist < bestDistY) {
+                        bestDistY = dist;
+                        snapY = { offset: gy - my, y: gy, extendX1, extendX2 };
+                    }
+                }
+            }
+        }
+    }
+
     let dx = 0;
     let dy = 0;
 
-    if (snapX) {
+    // Apply X snap only if not broken out of a previous X snap
+    if (snapX && !activeSnapX) {
         dx = snapX.offset;
         drawGuide(snapX.x, snapX.extendY1, snapX.x, snapX.extendY2);
+        if (mouseX !== undefined) {
+            activeSnapX = { guideValue: snapX.x, mouseAtSnap: mouseX };
+        }
+    } else if (activeSnapX) {
+        // Still in an active snap — hold position by drawing guide but no offset
+        drawGuide(activeSnapX.guideValue, extendY1, activeSnapX.guideValue, extendY2);
     }
-    if (snapY) {
+
+    if (snapY && !activeSnapY) {
         dy = snapY.offset;
         drawGuide(snapY.extendX1, snapY.y, snapY.extendX2, snapY.y);
+        if (mouseY !== undefined) {
+            activeSnapY = { guideValue: snapY.y, mouseAtSnap: mouseY };
+        }
+    } else if (activeSnapY) {
+        drawGuide(extendX1, activeSnapY.guideValue, extendX2, activeSnapY.guideValue);
     }
 
     return { dx, dy };
 }
 
 /**
- * Clear all snap guides. Call on mouseUp.
+ * Clear all snap guides and reset snap state. Call on mouseUp.
  */
 export function clearSnapGuides() {
     clearGuides();
+    activeSnapX = null;
+    activeSnapY = null;
 }
