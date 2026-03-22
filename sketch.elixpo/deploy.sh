@@ -71,6 +71,12 @@ dry_run() {
   fi
 }
 
+auth_remote() {
+  local url
+  url=$(git remote get-url origin)
+  echo "${url/https:\/\//https:\/\/${GITHUB_ACCESS_TOKEN}@}"
+}
+
 # ── Infra Commands ───────────────────────────────────────────
 
 secrets() {
@@ -116,7 +122,8 @@ deploy() {
     echo "==> No changes to commit."
   else
     sudo git commit -m "deploy: v${VERSION}"
-    sudo git push origin main
+    load_env
+    sudo git push "$(auth_remote)" main
     echo "==> Pushed v${VERSION} to origin/main."
   fi
 }
@@ -259,7 +266,9 @@ do_release() {
   if $RELEASE_ENGINE; then
     echo "==> Publishing @elixpo/lixsketch to npm..."
     dry_run "cd '$SCRIPT_DIR/packages/lixsketch' && sudo NPM_TOKEN='$_NPM_TOKEN' npm publish --access public --registry https://registry.npmjs.org/ --//registry.npmjs.org/:_authToken='$_NPM_TOKEN'"
-    echo "==> Engine published"
+    echo "==> Publishing @elixpo/lixsketch to GitHub Packages..."
+    dry_run "cd '$SCRIPT_DIR/packages/lixsketch' && sudo npm publish --access public --registry https://npm.pkg.github.com/ --//npm.pkg.github.com/:_authToken='$_GH_TOKEN'"
+    echo "==> Engine published (npm + GitHub Packages)"
   fi
 
   if $RELEASE_VSCODE; then
@@ -282,7 +291,7 @@ do_release() {
   dry_run "sudo git add -A"
   dry_run "sudo git commit -m 'release: v${NEW_VERSION}' || true"
   dry_run "sudo git tag 'v${NEW_VERSION}'"
-  dry_run "sudo git push origin main --tags"
+  dry_run "sudo git push \"\$(auth_remote)\" main --tags"
 
   # ── GitHub Release ──
   echo "==> Creating GitHub release..."
