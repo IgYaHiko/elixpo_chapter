@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { streamAI } from '../../ai/stream';
 import { EDIT_SYSTEM_PROMPT, WRITE_SYSTEM_PROMPT } from '../../ai/prompts';
+import { parseMarkdownToBlocks } from './markdownToBlocks';
 
 /**
  * AI toolbar that appears when text is selected.
@@ -143,41 +144,7 @@ export default function AISelectionToolbar({ editor }) {
     if (!aiResult || !editor) return;
 
     try {
-      // Replace the selected blocks with AI-generated content
-      // Parse the markdown into blocks
-      const lines = aiResult.split('\n');
-      const newBlocks = lines
-        .filter((line) => line.trim() !== '')
-        .map((line) => {
-          // Detect heading
-          const headingMatch = line.match(/^(#{1,3})\s+(.+)/);
-          if (headingMatch) {
-            return {
-              type: 'heading',
-              props: { level: headingMatch[1].length.toString() },
-              content: [{ type: 'text', text: headingMatch[2] }],
-            };
-          }
-          // Detect list item
-          if (line.match(/^[-*]\s+/)) {
-            return {
-              type: 'bulletListItem',
-              content: [{ type: 'text', text: line.replace(/^[-*]\s+/, '') }],
-            };
-          }
-          if (line.match(/^\d+\.\s+/)) {
-            return {
-              type: 'numberedListItem',
-              content: [{ type: 'text', text: line.replace(/^\d+\.\s+/, '') }],
-            };
-          }
-          // Default paragraph
-          return {
-            type: 'paragraph',
-            content: [{ type: 'text', text: line }],
-          };
-        });
-
+      const newBlocks = parseMarkdownToBlocks(aiResult);
       if (selectedBlockIds.length > 0 && newBlocks.length > 0) {
         editor.replaceBlocks(selectedBlockIds, newBlocks);
       }
@@ -286,7 +253,7 @@ export default function AISelectionToolbar({ editor }) {
               {selectedText && (
                 <div className="mb-3">
                   <p className="text-[10px] text-[#6b7a8d] uppercase tracking-wider mb-1.5 font-bold">Original</p>
-                  <div className="text-[13px] text-[#f8717180] leading-relaxed line-through decoration-[#f87171] whitespace-pre-wrap">
+                  <div className="text-[13px] leading-relaxed whitespace-pre-wrap ai-diff-deleted">
                     {selectedText}
                   </div>
                 </div>
@@ -297,11 +264,15 @@ export default function AISelectionToolbar({ editor }) {
                 <p className="text-[10px] text-[#6b7a8d] uppercase tracking-wider mb-1.5 font-bold flex items-center gap-1.5">
                   AI Edit
                   {mode === 'streaming' && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#9b7bf7] animate-pulse" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#c4b5fd] animate-pulse" />
                   )}
                 </p>
-                <div className="text-[13px] text-[#93c5fd] leading-relaxed whitespace-pre-wrap bg-[#93c5fd08] rounded-lg px-3 py-2 border-l-2 border-[#93c5fd40]">
-                  {streamingText || <span className="text-[#6b7a8d] italic">Generating...</span>}
+                <div className="text-[13px] text-[#c4b5fd] leading-relaxed whitespace-pre-wrap bg-[#c4b5fd08] rounded-lg px-3 py-2 border-l-2 border-[#c4b5fd40]">
+                  {streamingText ? (
+                    <span className={mode === 'streaming' ? 'ai-streaming-cursor' : ''}>{streamingText}</span>
+                  ) : (
+                    <span className="text-[#6b7a8d] italic">Generating...</span>
+                  )}
                 </div>
               </div>
             </div>
