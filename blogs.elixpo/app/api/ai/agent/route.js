@@ -1,10 +1,36 @@
-// Server-side proxy for Pollinations AI streaming
-// Keeps API key server-side, streams SSE to client
+// Agentic AI endpoint — supports function calling for text + image generation
+// The LLM decides whether to use tools (agentic) or respond directly (simple)
 
 import { getSession } from '../../../../lib/auth';
 import { getLimits } from '../../../../lib/tiers';
 
 const POLLINATIONS_BASE = 'https://gen.pollinations.ai/v1';
+
+const TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'generate_image',
+      description: 'Generate an image to embed in the blog post. Use this when the content would benefit from a visual — diagrams, illustrations, hero images, concept art, etc.',
+      parameters: {
+        type: 'object',
+        properties: {
+          prompt: {
+            type: 'string',
+            description: 'Detailed image generation prompt. Be specific about style, content, colors, composition.',
+          },
+          alt: {
+            type: 'string',
+            description: 'Alt text for the image (accessibility).',
+          },
+          width: { type: 'integer', description: 'Image width in pixels', default: 1024 },
+          height: { type: 'integer', description: 'Image height in pixels', default: 768 },
+        },
+        required: ['prompt', 'alt'],
+      },
+    },
+  },
+];
 
 export async function POST(request) {
   const apiKey = process.env.POLLINATIONS_TEXT_API_KEY;
@@ -12,12 +38,12 @@ export async function POST(request) {
     return new Response(JSON.stringify({ error: 'AI not configured' }), { status: 500 });
   }
 
-  // Enforce AI usage tier limits
   const session = await getSession();
   if (!session?.userId) {
     return new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401 });
   }
 
+  // Enforce AI usage tier limits
   let db;
   try {
     const { getDB } = await import('../../../../lib/cloudflare');
@@ -38,22 +64,23 @@ export async function POST(request) {
         }), { status: 429 });
       }
 
-      // Increment usage
-      await db.prepare(`
-        UPDATE users SET ai_usage_today = ?, ai_usage_date = ? WHERE id = ?
-      `).bind(usageToday + 1, today, session.userId).run();
+      await db.prepare('UPDATE users SET ai_usage_today = ?, ai_usage_date = ? WHERE id = ?')
+        .bind(usageToday + 1, today, session.userId).run();
     }
   } catch {
-    // D1 not available (local dev) — skip enforcement
+    // D1 not available — skip enforcement
   }
 
   const body = await request.json();
-  const { systemPrompt, userPrompt, model = 'openai', temperature = 0.7 } = body;
+  const { systemPrompt, userPrompt, messages, model = 'openai' } = body;
 
-  if (!userPrompt) {
-    return new Response(JSON.stringify({ error: 'Missing userPrompt' }), { status: 400 });
-  }
+  // Build messages array — support both simple (systemPrompt+userPrompt) and multi-turn (messages)
+  const chatMessages = messages || [
+    ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+    { role: 'user', content: userPrompt },
+  ];
 
+  // First call: let the LLM decide whether to use tools or respond directly
   const aiRes = await fetch(`${POLLINATIONS_BASE}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -62,11 +89,10 @@ export async function POST(request) {
     },
     body: JSON.stringify({
       model,
-      messages: [
-        ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
-        { role: 'user', content: userPrompt },
-      ],
-      temperature,
+      messages: chatMessages,
+      tools: TOOLS,
+      tool_choice: 'auto',
+      temperature: 0.7,
       stream: true,
     }),
   });
@@ -76,7 +102,7 @@ export async function POST(request) {
     return new Response(JSON.stringify({ error: `AI error: ${err}` }), { status: aiRes.status });
   }
 
-  // Pass through the SSE stream directly
+  // Stream the response through — client handles tool_calls
   return new Response(aiRes.body, {
     headers: {
       'Content-Type': 'text/event-stream',
