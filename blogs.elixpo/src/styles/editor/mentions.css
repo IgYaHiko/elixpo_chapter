@@ -157,3 +157,17 @@
   font-weight: 700;
   color: #c4b5fd;
 }
+
+/* ===== Mention Hover Card ===== */
+
+.mention-hover-card {
+  background: #141a26;
+  border: 1px solid #232d3f;
+  border-radius: 14px;
+  padding: 14px 16px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+  min-width: 240px;
+  max-width: 300px;
+  animation: mentionMenuIn 0.15s ease-out;
+  backdrop-filter: blur(12px);
+}
