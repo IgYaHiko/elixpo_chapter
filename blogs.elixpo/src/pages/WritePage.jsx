@@ -35,6 +35,11 @@ const EmojiPicker = dynamic(
   { ssr: false }
 );
 
+const KeyboardShortcutsModal = dynamic(
+  () => import('../components/Editor/KeyboardShortcutsModal'),
+  { ssr: false }
+);
+
 const STORAGE_KEY_PREFIX = 'lixblogs_draft_';
 
 function getDraftKey(slugid) {
@@ -189,10 +194,10 @@ function HamburgerMenu({ onShareDraft, onChangeCover, onChangeTitle, onChangeTop
           <div className="h-px bg-[#232d3f]" />
           <div className="py-1.5">
             <button
-              onClick={() => setOpen(false)}
+              onClick={() => { setOpen(false); document.querySelector('[data-shortcuts-btn]')?.click(); }}
               className="flex items-center gap-3 w-full px-4 py-2.5 text-[13px] text-[#c8c8c8] hover:text-white hover:bg-[#ffffff06] transition-colors"
             >
-              <ion-icon name="keyboard-outline" style={{ fontSize: '15px' }} />
+              <svg width="15" height="15" viewBox="0 0 512 512" fill="none" stroke="currentColor" strokeWidth="36" strokeLinecap="round" strokeLinejoin="round"><rect x="48" y="128" width="416" height="256" rx="48" ry="48"/><path d="M160 304h192"/><path d="M160 240h16m48 0h16m48 0h16m48 0h16"/><path d="M160 176h16m48 0h16m48 0h16m48 0h16"/></svg>
               Keyboard shortcuts
             </button>
           </div>
@@ -233,7 +238,63 @@ export default function WritePage({ slugid }) {
   const [isDraggingCover, setIsDraggingCover] = useState(false);
   const coverDragStart = useRef({ x: 0, y: 0, posX: 50, posY: 50 });
 
+  const [syncStatus, setSyncStatus] = useState('idle'); // idle | local | syncing | synced
+  const [showSavedToast, setShowSavedToast] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+
   const username = user?.username || 'you';
+
+  // Ctrl+S → save to localStorage immediately, then sync to cloud
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+
+        // Save to localStorage first
+        if (title || editorContent) {
+          saveDraft(slugid, { title, subtitle, tags, publishAs, coverPreview, editorContent, pageEmoji });
+          setLastSaved(Date.now());
+          setSyncStatus('syncing');
+
+          // Sync to cloud
+          (async () => {
+            try {
+              const res = await fetch('/api/blogs/draft', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  slugid,
+                  title,
+                  subtitle,
+                  tags,
+                  publishAs,
+                  coverPreview,
+                  editorContent,
+                  pageEmoji,
+                }),
+              });
+
+              if (res.ok) {
+                setSyncStatus('synced');
+                setShowSavedToast(true);
+                setTimeout(() => setShowSavedToast(false), 3000);
+                setTimeout(() => setSyncStatus('idle'), 5000);
+              } else {
+                setSyncStatus('local');
+                setTimeout(() => setSyncStatus('idle'), 5000);
+              }
+            } catch {
+              setSyncStatus('local');
+              setTimeout(() => setSyncStatus('idle'), 5000);
+            }
+          })();
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [title, subtitle, tags, publishAs, coverPreview, editorContent, pageEmoji, slugid]);
 
   useEffect(() => {
     // Small delay to show skeleton and let the UI mount before heavy JSON parsing
@@ -297,12 +358,17 @@ export default function WritePage({ slugid }) {
     setWordCount(text.trim().split(/\s+/).filter(Boolean).length);
   }, []);
 
+  const [previewBlocks, setPreviewBlocks] = useState([]);
+
   const switchMode = useCallback(async (newMode) => {
     if (newMode !== 'edit' && editorRef.current) {
       try {
         const [html, md] = await Promise.all([editorRef.current.getHTML(), editorRef.current.getMarkdown()]);
         setPreviewHtml(html);
         setMarkdown(md);
+        if (editorRef.current.getBlocks) {
+          setPreviewBlocks(editorRef.current.getBlocks());
+        }
       } catch { /* not ready */ }
     }
     setMode(newMode);
@@ -352,6 +418,21 @@ export default function WritePage({ slugid }) {
           {lastSaved && (
             <span className="text-[#7c8a9e] text-[11px] hidden md:block">{formatSavedTime(lastSaved)}</span>
           )}
+          {/* Sync status dot */}
+          {syncStatus !== 'idle' && (
+            <span
+              className={`w-2 h-2 rounded-full flex-shrink-0 transition-colors ${
+                syncStatus === 'syncing' ? 'bg-yellow-400 animate-pulse' :
+                syncStatus === 'synced' ? 'bg-green-400' :
+                syncStatus === 'local' ? 'bg-yellow-500' : ''
+              }`}
+              title={
+                syncStatus === 'syncing' ? 'Syncing to cloud...' :
+                syncStatus === 'synced' ? 'Saved to cloud' :
+                syncStatus === 'local' ? 'Saved locally' : ''
+              }
+            />
+          )}
         </div>
 
         {/* Right: Actions */}
@@ -397,6 +478,16 @@ export default function WritePage({ slugid }) {
               </>
             )}
           </div>
+
+          {/* Shortcuts help */}
+          <button
+            data-shortcuts-btn
+            onClick={() => setShowShortcuts(true)}
+            className="h-8 w-8 rounded-lg bg-[#141a26] border border-[#232d3f] flex items-center justify-center hover:border-[#333] transition-colors text-[#6b7a8d] hover:text-[#c4b5fd] text-sm font-bold"
+            title="Keyboard shortcuts"
+          >
+            ?
+          </button>
 
           {/* Hamburger menu */}
           <HamburgerMenu
@@ -639,13 +730,13 @@ export default function WritePage({ slugid }) {
                         }}
                       >
                         <div
-                          className="w-[72px] h-[72px] rounded-full bg-[#0e121b] border-[3px] border-[#0e121b] shadow-lg flex items-center justify-center cursor-pointer relative"
+                          className="w-[72px] h-[72px] rounded-full bg-[#151820] flex items-center justify-center cursor-pointer relative"
+                          style={{ borderRadius: '50%' }}
                           onClick={() => setShowEmojiPicker(true)}
                         >
-                          <span className="text-[55px] leading-none select-none">{pageEmoji}</span>
-                          <div className="absolute inset-[-2px] rounded-full" />
+                          <span className="text-[42px] leading-none select-none">{pageEmoji}</span>
                         </div>
-                        <button onClick={() => setPageEmoji(null)} className="absolute -top-1 -right-3 opacity-0 group-hover:opacity-100 h-5 w-5 rounded-full bg-[#232d3f] border border-[#333] flex items-center justify-center text-[#888] hover:text-white transition-all text-[10px]">&times;</button>
+                        <button onClick={() => setPageEmoji(null)} className="absolute -top-1 -left-1 opacity-0 group-hover:opacity-100 h-5 w-5 rounded-full bg-[#232d3f] border border-[#333] flex items-center justify-center text-[#888] hover:text-white transition-all text-[10px] z-20">&times;</button>
                       </div>
                     )}
                   </div>
@@ -744,7 +835,7 @@ export default function WritePage({ slugid }) {
                     </div>
                   </div>
 
-                  <div className="min-h-[60vh] pb-[100px]">
+                  <div className="min-h-[60vh] pb-[100px] relative">
                     <BlockNoteEditor
                       ref={editorRef}
                       onChange={handleEditorChange}
@@ -753,6 +844,39 @@ export default function WritePage({ slugid }) {
                       onTitleChange={(newTitle) => { setTitle(newTitle); setAiTitleKey(k => k + 1); }}
                       blogId={slugid}
                     />
+                    {/* Outline sidebar — shows heading positions */}
+                    {editorContent && editorContent.length > 0 && (() => {
+                      const headings = (editorContent || []).filter(
+                        (b) => b.type === 'heading' && b.content?.length > 0
+                      );
+                      if (headings.length === 0) return null;
+                      return (
+                        <div className="editor-outline-sidebar">
+                          <p className="editor-outline-title">Outline</p>
+                          <ul className="editor-outline-list">
+                            {headings.map((h, i) => {
+                              const level = parseInt(h.props?.level || '1', 10);
+                              const text = h.content.map((c) => c.text || '').join('');
+                              if (!text.trim()) return null;
+                              return (
+                                <li
+                                  key={h.id || i}
+                                  className="editor-outline-item"
+                                  style={{ paddingLeft: `${(level - 1) * 12}px` }}
+                                  onClick={() => {
+                                    const el = document.querySelector(`[data-id="${h.id}"]`);
+                                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                  }}
+                                >
+                                  <span className="editor-outline-dot" style={{ opacity: level === 1 ? 1 : level === 2 ? 0.7 : 0.4 }} />
+                                  <span className="editor-outline-text">{text}</span>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </>
                 </div>
@@ -761,7 +885,9 @@ export default function WritePage({ slugid }) {
           )}
 
           {mode === 'preview' && (
-            <BlogPreview title={title} subtitle={subtitle} coverPreview={coverPreview} coverZoom={coverZoom} coverPos={coverPos} pageEmoji={pageEmoji} tags={tags} html={previewHtml} user={user} wordCount={wordCount} />
+            <div className="blog-preview-fullwidth">
+              <BlogPreview title={title} subtitle={subtitle} coverPreview={coverPreview} coverZoom={coverZoom} coverPos={coverPos} pageEmoji={pageEmoji} tags={tags} html={previewHtml} blocks={previewBlocks} user={user} wordCount={wordCount} />
+            </div>
           )}
 
           {mode === 'code' && (
@@ -889,6 +1015,26 @@ export default function WritePage({ slugid }) {
           </button>
         </div>
       </div>
+
+      {/* Keyboard shortcuts modal */}
+      {showShortcuts && <KeyboardShortcutsModal onClose={() => setShowShortcuts(false)} />}
+
+      {/* Saved to cloud toast */}
+      <AnimatePresence>
+        {showSavedToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 10 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9999] flex items-center gap-2.5 px-4 py-2.5 rounded-xl border border-green-500/20 bg-[#141a26]/90 backdrop-blur-lg shadow-2xl"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+            <span className="text-[13px] text-green-300 font-medium">Saved to cloud</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
