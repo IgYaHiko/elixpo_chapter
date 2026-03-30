@@ -162,7 +162,6 @@ function HamburgerMenu({ onShareDraft, onChangeCover, onChangeTitle, onChangeTop
     { label: 'Change featured image', action: onChangeCover, icon: 'image-outline' },
     { label: 'Change display title', action: onChangeTitle, icon: 'text-outline' },
     { label: 'Change topics', action: onChangeTopics, icon: 'pricetags-outline' },
-    { label: 'See revision history', action: onRevisionHistory, icon: 'time-outline' },
     { label: 'More settings', action: onMoreSettings, icon: 'options-outline' },
   ];
 
@@ -222,6 +221,8 @@ export default function WritePage({ slugid }) {
   const [showPublishPanel, setShowPublishPanel] = useState(false);
   const [showPublishMenu, setShowPublishMenu] = useState(false);
   const [showCoverModal, setShowCoverModal] = useState(false);
+  const [coverUrlMode, setCoverUrlMode] = useState(false);
+  const [coverUrlInput, setCoverUrlInput] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [pageEmoji, setPageEmoji] = useState(null);
   const [editorContent, setEditorContent] = useState(null);
@@ -839,13 +840,7 @@ export default function WritePage({ slugid }) {
                             />
                           </label>
                           <button
-                            onClick={() => {
-                              const url = prompt('Paste image URL:');
-                              if (url?.trim()) {
-                                setCoverPreview(url.trim());
-                                setShowCoverModal(false);
-                              }
-                            }}
+                            onClick={() => setCoverUrlMode(true)}
                             className="flex flex-col items-center gap-2 group/url"
                           >
                             <div className="w-12 h-12 rounded-full bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center group-hover/url:bg-white/20 transition-colors">
@@ -857,6 +852,43 @@ export default function WritePage({ slugid }) {
                             <span className="text-xs text-white/70 font-medium">From URL</span>
                           </button>
                         </div>
+                        {/* Inline URL input — slides up from bottom */}
+                        {coverUrlMode && (
+                          <div className="absolute bottom-0 left-0 right-0 z-20 bg-black/60 backdrop-blur-md p-4 rounded-b-xl">
+                            <div className="flex gap-2">
+                              <input
+                                autoFocus
+                                type="url"
+                                value={coverUrlInput}
+                                onChange={(e) => setCoverUrlInput(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && coverUrlInput.trim()) {
+                                    setCoverPreview(coverUrlInput.trim());
+                                    setShowCoverModal(false);
+                                    setCoverUrlMode(false);
+                                    setCoverUrlInput('');
+                                  }
+                                  if (e.key === 'Escape') { setCoverUrlMode(false); setCoverUrlInput(''); }
+                                }}
+                                placeholder="Paste image URL and press Enter..."
+                                className="flex-1 bg-white/10 text-white rounded-lg px-3 py-2 text-[13px] outline-none border border-white/20 focus:border-white/40 placeholder-white/40"
+                              />
+                              <button
+                                onClick={() => {
+                                  if (coverUrlInput.trim()) {
+                                    setCoverPreview(coverUrlInput.trim());
+                                    setShowCoverModal(false);
+                                    setCoverUrlMode(false);
+                                    setCoverUrlInput('');
+                                  }
+                                }}
+                                className="px-4 py-2 bg-white/15 text-white rounded-lg text-[13px] font-medium hover:bg-white/25 transition-colors"
+                              >
+                                Set
+                              </button>
+                            </div>
+                          </div>
+                        )}
                         <button
                           onClick={() => setShowCoverModal(false)}
                           className="absolute top-3 right-3 z-10 w-7 h-7 rounded-full bg-black/30 backdrop-blur flex items-center justify-center text-white/60 hover:text-white transition-colors"
@@ -914,59 +946,22 @@ export default function WritePage({ slugid }) {
 
                   {/* Emoji picker — absolute positioned, glassmorphic */}
                   {showEmojiPicker && (
-                    <div className="relative">
-                      <div className="absolute left-0 top-0 z-50 emoji-picker-glass">
-                        <EmojiPicker
-                          onSelect={(emoji) => { setPageEmoji(emoji); setShowEmojiPicker(false); }}
-                          onRemove={() => { setPageEmoji(null); setShowEmojiPicker(false); }}
-                          onClose={() => setShowEmojiPicker(false)}
-                        />
+                    <>
+                      <div className="fixed inset-0 z-[60]" onClick={() => setShowEmojiPicker(false)} />
+                      <div className="relative">
+                        <div className="absolute left-0 top-0 z-[61] emoji-picker-glass">
+                          <EmojiPicker
+                            onSelect={(emoji) => { setPageEmoji(emoji); setShowEmojiPicker(false); }}
+                            onRemove={() => { setPageEmoji(null); setShowEmojiPicker(false); }}
+                            onClose={() => setShowEmojiPicker(false)}
+                          />
+                        </div>
                       </div>
-                    </div>
+                    </>
                   )}
 
-                  <div className="relative">
-                    <textarea
-                      value={title}
-                      onChange={(e) => {
-                        setTitle(e.target.value);
-                        setAiTitleKey(0);
-                        e.target.style.height = 'auto';
-                        e.target.style.height = e.target.scrollHeight + 'px';
-                      }}
-                      onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
-                      placeholder="Blog title..."
-                      className={`w-full bg-transparent text-[2em] font-extrabold outline-none placeholder-[#4a5568] mb-1 leading-tight resize-none overflow-hidden ${aiTitleKey > 0 ? 'text-transparent' : ''}`}
-                      rows={1}
-                    />
-                    {/* AI title word animation overlay */}
-                    {aiTitleKey > 0 && title && (
-                      <div className="absolute inset-0 pointer-events-none text-[2em] font-extrabold leading-tight flex flex-wrap items-start" key={aiTitleKey}>
-                        {title.split(/(\s+)/).map((word, i) => (
-                          word.match(/^\s+$/) ? <span key={i}>&nbsp;</span> : (
-                            <motion.span
-                              key={i}
-                              initial={{ opacity: 0, y: 8, filter: 'blur(4px)' }}
-                              animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-                              transition={{ duration: 0.35, delay: i * 0.06, ease: 'easeOut' }}
-                              className="text-[#c4b5fd]"
-                              onAnimationComplete={() => {
-                                // After last word animation, switch back to normal textarea
-                                if (i === title.split(/(\s+)/).length - 1) {
-                                  setTimeout(() => setAiTitleKey(0), 800);
-                                }
-                              }}
-                            >
-                              {word}
-                            </motion.span>
-                          )
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Author bar — stacked avatars, name, read time, word count */}
-                  <div className="flex items-center gap-3 mt-3 mb-4">
+                  {/* Author bar — above title */}
+                  <div className="flex items-center gap-3 mt-2 mb-2">
                     <div className="flex -space-x-2">
                       {user?.avatar_url ? (
                         <img src={user.avatar_url} alt="" className="w-7 h-7 rounded-full object-cover border-2 border-[#131922]" />
@@ -983,6 +978,57 @@ export default function WritePage({ slugid }) {
                       <span className="text-[#3a3f4f]">·</span>
                       <span>{wordCount} {wordCount === 1 ? 'word' : 'words'}</span>
                     </div>
+                  </div>
+
+                  {/* Tags — shown under author bar */}
+                  {tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-0">
+                      {tags.map((tag) => (
+                        <span key={tag} className="px-2.5 py-0.5 bg-[#9b7bf70a] rounded-full text-[12px] text-[#9b7bf7]">#{tag}</span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* 30px gap before title */}
+                  <div style={{ height: '30px' }} />
+
+                  {/* Title */}
+                  <div className="relative">
+                    <textarea
+                      value={title}
+                      onChange={(e) => {
+                        setTitle(e.target.value);
+                        setAiTitleKey(0);
+                        e.target.style.height = 'auto';
+                        e.target.style.height = e.target.scrollHeight + 'px';
+                      }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
+                      placeholder="Blog title..."
+                      className={`w-full bg-transparent text-[2em] font-extrabold outline-none placeholder-[#4a5568] mb-1 leading-tight resize-none overflow-hidden ${aiTitleKey > 0 ? 'text-transparent' : ''}`}
+                      rows={1}
+                    />
+                    {aiTitleKey > 0 && title && (
+                      <div className="absolute inset-0 pointer-events-none text-[2em] font-extrabold leading-tight flex flex-wrap items-start" key={aiTitleKey}>
+                        {title.split(/(\s+)/).map((word, i) => (
+                          word.match(/^\s+$/) ? <span key={i}>&nbsp;</span> : (
+                            <motion.span
+                              key={i}
+                              initial={{ opacity: 0, y: 8, filter: 'blur(4px)' }}
+                              animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                              transition={{ duration: 0.35, delay: i * 0.06, ease: 'easeOut' }}
+                              className="text-[#c4b5fd]"
+                              onAnimationComplete={() => {
+                                if (i === title.split(/(\s+)/).length - 1) {
+                                  setTimeout(() => setAiTitleKey(0), 800);
+                                }
+                              }}
+                            >
+                              {word}
+                            </motion.span>
+                          )
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <div className="min-h-[60vh] pb-[100px] relative">
@@ -1129,7 +1175,7 @@ export default function WritePage({ slugid }) {
 
           {/* Tags */}
           <div>
-            <label className="text-[12px] text-[#9ca3af] mb-2 block font-medium">Tags (up to 5)</label>
+            <label className="text-[12px] text-[#9ca3af] mb-2 block font-medium">Tags (up to 5) <span className="text-[#666] font-normal">— press Enter to attach</span></label>
             <div className="flex flex-wrap gap-2 mb-2">
               {tags.map((tag) => (
                 <span key={tag} className="flex items-center gap-1 px-2.5 py-1 bg-[#9b7bf714] rounded-full text-[12px] text-[#9b7bf7]">
