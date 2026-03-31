@@ -1,82 +1,75 @@
-import { baseLayout, ctaButton, muted, escHtml, avatar } from './base.js';
+import { baseLayout, muted, escHtml } from './base.js';
 
 /**
- * Org invite email — sent when a user is invited to join an organization.
- *
- * @param {object} data
- * @param {string} data.orgName       - Organization name
- * @param {string} data.orgSlug       - Org slug (for URL)
- * @param {string} [data.orgLogoUrl]  - Org logo URL
- * @param {string} data.inviterName   - Display name of the person inviting
- * @param {string} data.inviterAvatar - Avatar URL of inviter
- * @param {string} data.role          - Role being offered (admin, maintain, write, read)
- * @param {string} data.inviteUrl     - Full invite acceptance URL
- * @param {string} [data.message]     - Optional personal message
- * @returns {{ subject: string, html: string }}
+ * Org invite email — bright, professional, center-aligned.
  */
 export function orgInvite(data) {
   const {
     orgName, orgSlug, orgLogoUrl,
     inviterName, inviterAvatar,
-    role, inviteUrl, message,
+    recipientName, recipientAvatar,
+    role, inviteUrl, declineUrl,
   } = data;
 
   const roleLabels = { admin: 'Admin', maintain: 'Maintainer', write: 'Writer', read: 'Reader' };
-  const roleColors = { admin: '#c4b5fd', maintain: '#93c5fd', write: '#86efac', read: '#9ca3af' };
   const roleLabel = roleLabels[role] || role;
-  const roleColor = roleColors[role] || '#9ca3af';
 
-  const subject = `You're invited to join ${orgName} on LixBlogs`;
+  const subject = `${inviterName} invited you to join ${orgName}`;
 
   const body = `
-    <p style="margin:0 0 20px;font-size:15px;color:#d1d5db;line-height:1.6">
-      <strong style="color:#ffffff">${escHtml(inviterName)}</strong> has invited you to join
-      <strong style="color:#ffffff">${escHtml(orgName)}</strong> as a
-      <span style="color:${roleColor};font-weight:600">${escHtml(roleLabel)}</span>.
-    </p>
+    <div style="text-align:center">
 
-    <!-- Org card -->
-    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color:#0c1017;border:1px solid #1e2736;border-radius:12px;overflow:hidden">
-      <tr>
-        <td style="padding:20px">
-          <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-            <td style="padding-right:14px;vertical-align:top">
-              ${avatar(orgLogoUrl, orgName, 44)}
-            </td>
-            <td style="vertical-align:top">
-              <p style="margin:0;font-size:16px;font-weight:700;color:#ffffff">${escHtml(orgName)}</p>
-              <p style="margin:4px 0 0;font-size:13px;color:#6b7f99">@${escHtml(orgSlug)}</p>
-            </td>
-          </tr></table>
-        </td>
-      </tr>
-    </table>
+      ${circleAvatar(recipientAvatar, recipientName, 64)}
+      <div style="margin:8px 0;font-size:20px;color:#c0c0cc;font-weight:300">+</div>
+      ${squareAvatar(orgLogoUrl, orgName, 64)}
 
-    ${message ? `
-    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin-top:16px;background-color:#0c1017;border:1px solid #1e2736;border-radius:12px;overflow:hidden">
-      <tr>
-        <td style="padding:16px 20px">
-          <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-            <td style="padding-right:10px;vertical-align:top">
-              ${avatar(inviterAvatar, inviterName, 28)}
-            </td>
-            <td style="vertical-align:top">
-              <p style="margin:0;font-size:11px;color:#6b7f99;font-weight:600">${escHtml(inviterName)} says:</p>
-              <p style="margin:6px 0 0;font-size:13px;color:#d1d5db;line-height:1.5;font-style:italic">"${escHtml(message)}"</p>
-            </td>
-          </tr></table>
-        </td>
-      </tr>
-    </table>` : ''}
+      <p style="margin:24px 0 4px;font-size:18px;font-weight:700;color:#1a1a2e">
+        @${escHtml(inviterName)} invited you to collaborate
+      </p>
+      <p style="margin:0 0 24px;font-size:14px;color:#7a7a8e">
+        Join <strong style="color:#3a3a50">${escHtml(orgName)}</strong> as <strong style="color:#3a3a50">${escHtml(roleLabel)}</strong>
+      </p>
 
-    ${ctaButton('Accept Invitation', inviteUrl)}
+      <!-- Buttons -->
+      <div style="margin-bottom:28px">
+        <a href="${escHtml(inviteUrl)}" style="display:inline-block;background-color:#9b7bf7;border-radius:8px;padding:12px 28px;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none">Accept invitation</a>
+        &nbsp;
+        <a href="${escHtml(declineUrl || inviteUrl)}" style="display:inline-block;border:1px solid #d8d8e4;border-radius:8px;padding:12px 28px;background-color:#f7f7fa;color:#3a3a50;font-size:14px;font-weight:600;text-decoration:none">Decline</a>
+      </div>
 
-    ${muted(`If you don't want to join, you can ignore this email. The invitation will expire automatically.`)}
-    ${muted(`Or copy this link: <a href="${escHtml(inviteUrl)}" style="color:#9b7bf7;text-decoration:none;word-break:break-all">${escHtml(inviteUrl)}</a>`)}
+      <div style="height:1px;background-color:#ececf0;margin-bottom:20px"></div>
+
+      <p style="margin:0 0 6px;font-size:12px;color:#a0a0b0">
+        By accepting, <strong style="color:#7a7a8e">${escHtml(orgName)}</strong> members will be able to:
+      </p>
+      <p style="margin:0;font-size:13px;color:#7a7a8e;line-height:1.8">
+        See your public profile information<br/>
+        See your published blogs within the organization<br/>
+        Assign you the ${escHtml(roleLabel)} role and its permissions
+      </p>
+
+      ${muted(`If you don't recognize this invitation, you can safely ignore this email.`)}
+    </div>
   `;
 
   return {
     subject,
-    html: baseLayout({ title: subject, body, preheader: `${inviterName} invited you to ${orgName}` }),
+    html: baseLayout({ title: subject, body, preheader: `@${inviterName} invited you to join ${orgName}` }),
   };
+}
+
+function circleAvatar(url, name, size) {
+  if (url) {
+    return `<img src="${escHtml(url)}" alt="${escHtml(name)}" width="${size}" height="${size}" style="display:inline-block;border-radius:50%;border:2px solid #ececf0;object-fit:cover" />`;
+  }
+  const initial = (name || '?')[0].toUpperCase();
+  return `<div style="display:inline-block;width:${size}px;height:${size}px;border-radius:50%;background-color:#f0f0f3;border:2px solid #ececf0;color:#7a7a8e;font-size:${Math.round(size * 0.36)}px;font-weight:700;line-height:${size}px;text-align:center">${initial}</div>`;
+}
+
+function squareAvatar(url, name, size) {
+  if (url) {
+    return `<img src="${escHtml(url)}" alt="${escHtml(name)}" width="${size}" height="${size}" style="display:inline-block;border-radius:14px;border:2px solid #ececf0;object-fit:cover" />`;
+  }
+  const initial = (name || '?')[0].toUpperCase();
+  return `<div style="display:inline-block;width:${size}px;height:${size}px;border-radius:14px;background-color:#f0f0f3;border:2px solid #ececf0;color:#7a7a8e;font-size:${Math.round(size * 0.36)}px;font-weight:700;line-height:${size}px;text-align:center">${initial}</div>`;
 }
