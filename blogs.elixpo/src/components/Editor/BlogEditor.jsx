@@ -454,7 +454,7 @@ function doSanitize(blocks) {
   return result;
 }
 
-const BlogEditor = forwardRef(function BlogEditor({ onChange, initialContent, onReady, onTitleChange, blogId }, ref) {
+const BlogEditor = forwardRef(function BlogEditor({ onChange, initialContent, onReady, onTitleChange, blogId, collaboration, onCollabSeeded }, ref) {
   const { isDark } = useTheme();
   const [showMentionMenu, setShowMentionMenu] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
@@ -483,7 +483,8 @@ const BlogEditor = forwardRef(function BlogEditor({ onChange, initialContent, on
 
   const editor = useCreateBlockNote({
     schema,
-    initialContent: sanitizedContent || undefined,
+    // When in collab mode, Yjs doc is the source of truth — no initialContent
+    ...(collaboration ? { collaboration } : { initialContent: sanitizedContent || undefined }),
     domAttributes: {
       editor: { class: 'blog-editor' },
     },
@@ -491,6 +492,24 @@ const BlogEditor = forwardRef(function BlogEditor({ onChange, initialContent, on
       default: "Press 'Space' for AI, type '/' for commands",
     },
   });
+
+  // Seed Yjs doc from existing content when collab starts on a blog that already has content
+  useEffect(() => {
+    if (!collaboration || !onCollabSeeded || !initialContent) return;
+    // Check if the Yjs fragment is empty (first collab session for this blog)
+    const fragment = collaboration.fragment;
+    if (fragment && fragment.length === 0 && Array.isArray(initialContent) && initialContent.length > 0) {
+      const sanitized = sanitizeInitialContent(initialContent);
+      if (sanitized && sanitized.length > 0) {
+        try {
+          editor.replaceBlocks(editor.document, sanitized);
+        } catch (e) {
+          console.error('Failed to seed collab doc:', e);
+        }
+      }
+      onCollabSeeded();
+    }
+  }, [collaboration, onCollabSeeded]);
 
   // Build HTML that includes custom blocks (equations, mermaid)
   const getCustomHTML = useCallback(async () => {
@@ -850,7 +869,7 @@ const BlogEditor = forwardRef(function BlogEditor({ onChange, initialContent, on
 
     // Ensure AI blocks have color props and show keep/discard
     const ids = aiBlockIdsRef.current;
-    const _noColorTypes = new Set(['image', 'divider', 'mermaidBlock']);
+    const _noColorTypes = new Set(['image', 'divider', 'mermaidBlock', 'blockEquation']);
     if (ids && ids.size > 0) {
       for (const id of ids) {
         try {
@@ -942,7 +961,7 @@ const BlogEditor = forwardRef(function BlogEditor({ onChange, initialContent, on
     hideSparkle();
     wrapperRef.current?.classList.remove('ai-editor-locked');
     // Reset textColor and backgroundColor to default on all AI blocks
-    const _noReset = new Set(['image', 'divider', 'mermaidBlock']);
+    const _noReset = new Set(['image', 'divider', 'mermaidBlock', 'blockEquation']);
     for (const id of aiBlockIdsRef.current) {
       try {
         const block = editor.document.find((b) => b.id === id);
@@ -1301,8 +1320,8 @@ const BlogEditor = forwardRef(function BlogEditor({ onChange, initialContent, on
             if (anchorIdxNow === -1) return;
 
             // Separate blocks: inline-content blocks go through replaceBlocks,
-            // content-none blocks (image, mermaid, divider) are inserted after
-            const specialTypes = new Set(['image', 'mermaidBlock', 'divider']);
+            // content-none blocks (image, mermaid, divider, blockEquation) are inserted after
+            const specialTypes = new Set(['image', 'mermaidBlock', 'divider', 'blockEquation']);
             const inlineBlocks = newBlocks.filter((b) => !specialTypes.has(b.type));
             const specialBlocks = newBlocks
               .map((b, idx) => ({ block: b, origIdx: idx }))
@@ -1368,7 +1387,7 @@ const BlogEditor = forwardRef(function BlogEditor({ onChange, initialContent, on
             aiBlockCountRef.current = currentIds.length;
 
             // Set BlockNote textColor + backgroundColor on AI blocks (survives re-renders)
-            const noColorProps = new Set(['image', 'divider', 'mermaidBlock']);
+            const noColorProps = new Set(['image', 'divider', 'mermaidBlock', 'blockEquation']);
             for (const id of currentIds) {
               try {
                 const block = editor.document.find((b) => b.id === id);
@@ -1460,7 +1479,7 @@ const BlogEditor = forwardRef(function BlogEditor({ onChange, initialContent, on
 
           if (contentText) {
             const finalBlocks = parseMarkdownToBlocks(contentText);
-            const _special = new Set(['image', 'mermaidBlock', 'divider']);
+            const _special = new Set(['image', 'mermaidBlock', 'divider', 'blockEquation']);
             const inlineOnly = finalBlocks.filter((b) => !_special.has(b.type));
             const specialOnly = finalBlocks
               .map((b, idx) => ({ block: b, origIdx: idx }))
@@ -1529,7 +1548,7 @@ const BlogEditor = forwardRef(function BlogEditor({ onChange, initialContent, on
           } catch {}
 
           // Set final BlockNote textColor + backgroundColor on AI blocks
-          const _skipColor = new Set(['image', 'divider', 'mermaidBlock']);
+          const _skipColor = new Set(['image', 'divider', 'mermaidBlock', 'blockEquation']);
           for (const id of currentIds) {
             try {
               const block = editor.document.find((b) => b.id === id);
