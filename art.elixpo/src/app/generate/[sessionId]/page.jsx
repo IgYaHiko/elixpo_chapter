@@ -6,7 +6,8 @@ import Navbar from '../../components/Navbar/Navbar';
 import { saveToLibrary } from '../../lib/library';
 import { isSignedIn, getUser } from '../../lib/auth';
 import { useModels } from '../../lib/useModels';
-import { generateVideo, prepareImageForVideo } from '../../lib/videoGen';
+import { generateVideo } from '../../lib/videoGen';
+import { generateVideoPrompt } from '../../lib/autoPrompt';
 import styles from './Session.module.css';
 
 const API_BASE = '/api';
@@ -342,16 +343,23 @@ export default function SessionPage({ params }) {
   const handleCreateVideo = async () => {
     if (!resultSrc || generatingVideo) return;
     setGeneratingVideo(true);
+    setPreviewTab('video');
 
     try {
-      const refImage = await prepareImageForVideo(resultSrc);
+      // Auto-generate a video prompt from the image if no custom prompt
+      let videoPrompt = prompt;
+      if (!videoPrompt || videoPrompt.length < 5) {
+        videoPrompt = await generateVideoPrompt(resultSrc);
+        console.log('[video] Auto-prompt:', videoPrompt);
+      }
+
       const result = await generateVideo({
-        prompt,
+        prompt: videoPrompt,
         model: 'ltx-2',
         width,
         height,
         duration: 5,
-        imageUrl: refImage,
+        imageUrl: resultSrc,
       });
 
       if (result.success) {
@@ -647,23 +655,7 @@ export default function SessionPage({ params }) {
               </div>
             )}
 
-            {resultSrc && !loading && (videoSrc || generatingVideo) && (
-              <div className={styles.previewTabs}>
-                <button
-                  className={`${styles.previewTab} ${previewTab === 'image' ? styles.previewTabActive : ''}`}
-                  onClick={() => setPreviewTab('image')}
-                >
-                  Image
-                </button>
-                <button
-                  className={`${styles.previewTab} ${previewTab === 'video' ? styles.previewTabActive : ''}`}
-                  onClick={() => setPreviewTab('video')}
-                >
-                  Video
-                  {generatingVideo && <span className={styles.tabSpinner} />}
-                </button>
-              </div>
-            )}
+
 
             {resultSrc && !loading && previewTab === 'video' && (
               <div className={styles.imageWrap}>

@@ -4,7 +4,8 @@ import { useState, useRef, useEffect, useCallback, use } from 'react';
 import { useRouter } from 'next/navigation';
 import { useModels } from '../../lib/useModels';
 import { STYLE_PRESETS } from '../../lib/blueprints';
-import { generateVideo, prepareImageForVideo } from '../../lib/videoGen';
+import { generateVideo } from '../../lib/videoGen';
+import { generateVideoPrompt } from '../../lib/autoPrompt';
 import styles from './Editor.module.css';
 
 const API_BASE = '/api';
@@ -120,7 +121,7 @@ function buildPosePrompt(joints) {
 export default function EditorPage({ params }) {
   const { id } = use(params);
   const router = useRouter();
-  const { editModels } = useModels();
+  const { editModels, videoModels } = useModels();
 
   // Image state
   const [imageSrc, setImageSrc] = useState(null);
@@ -144,6 +145,7 @@ export default function EditorPage({ params }) {
   const [previewTab, setPreviewTab] = useState('image'); // 'image' | 'video'
   const [videoSrc, setVideoSrc] = useState(null);
   const [generatingVideo, setGeneratingVideo] = useState(false);
+  const [videoModel, setVideoModel] = useState('ltx-2');
   const [stylePicker, setStylePicker] = useState(false);
   const [selectedStyle, setSelectedStyle] = useState(null);
   const [relightPicker, setRelightPicker] = useState(false);
@@ -652,29 +654,39 @@ If no character: {"hasCharacter": false, "reason": "explanation"}`
       return skeletons.length > 1 ? `character ${i + 1}: ${desc}` : desc;
     });
     const final = parts.join('; ') + (poseNote.trim() ? `, ${poseNote.trim()}` : '') + ', keep same character identities, clothing, and art style';
+    console.log('[pose] Generated prompt:', final);
     setPosePicker(false);
-    setPrompt(final);
+    // Don't show pose prompt in the prompt bar — it's internal
     handleEdit(final);
   };
 
   // ─── Video generation ───
   const handleGenerateVideo = async () => {
-    if (!prompt.trim() || generatingVideo) return;
+    if (generatingVideo) return;
     setGeneratingVideo(true);
+    setPreviewTab('video');
     setError(null);
 
     const controller = new AbortController();
     abortRef.current = controller;
 
     try {
-      const refImage = imageSrc ? await prepareImageForVideo(imageSrc) : null;
+      // Auto-generate prompt if user didn't type one
+      let videoPrompt = prompt.trim();
+      if (!videoPrompt && imageSrc) {
+        const imageB64 = await getImageAsBase64(imageSrc);
+        videoPrompt = await generateVideoPrompt(imageB64, controller.signal);
+        console.log('[video] Auto-prompt:', videoPrompt);
+      }
+      if (!videoPrompt) videoPrompt = 'cinematic scene, smooth motion, high quality';
+
       const result = await generateVideo({
-        prompt: prompt.trim(),
-        model: 'ltx-2',
+        prompt: videoPrompt,
+        model: videoModel,
         width,
         height,
         duration: 5,
-        imageUrl: refImage,
+        imageUrl: imageSrc,
         signal: controller.signal,
       });
 
@@ -724,7 +736,9 @@ If no character: {"hasCharacter": false, "reason": "explanation"}`
     return 'default';
   };
 
-  const selectedModel = editModels.find((m) => m.id === model) || editModels[0];
+  const activeModels = previewTab === 'video' ? videoModels : editModels;
+  const activeModelId = previewTab === 'video' ? videoModel : model;
+  const selectedModel = activeModels.find((m) => m.id === activeModelId) || activeModels[0];
 
   return (
     <div className={styles.page}>
@@ -756,11 +770,15 @@ If no character: {"hasCharacter": false, "reason": "explanation"}`
               </button>
               {modelOpen && (
                 <div className={styles.modelDropdown}>
-                  {editModels.map((m) => (
+                  {activeModels.map((m) => (
                     <button
                       key={m.id}
-                      className={`${styles.modelItem} ${m.id === model ? styles.modelItemActive : ''}`}
-                      onClick={() => { setModel(m.id); setModelOpen(false); }}
+                      className={`${styles.modelItem} ${m.id === activeModelId ? styles.modelItemActive : ''}`}
+                      onClick={() => {
+                        if (previewTab === 'video') setVideoModel(m.id);
+                        else setModel(m.id);
+                        setModelOpen(false);
+                      }}
                     >
                       <span>{m.label}</span>
                       <span className={styles.modelDesc}>{m.desc}</span>
@@ -840,9 +858,6 @@ If no character: {"hasCharacter": false, "reason": "explanation"}`
             className={`${styles.toolBtn} ${generatingVideo ? styles.toolActive : ''}`}
             onClick={() => {
               if (!imageSrc || generatingVideo) return;
-              // Switch to video tab and show prompt
-              setPreviewTab('video');
-              if (!prompt.trim()) setPrompt(originalPrompt || '');
               handleGenerateVideo();
             }}
             title="Generate video from this image"
@@ -1049,7 +1064,7 @@ If no character: {"hasCharacter": false, "reason": "explanation"}`
             <button
               className={styles.videoBtn}
               onClick={handleGenerateVideo}
-              disabled={generatingVideo || !prompt.trim() || posePicker}
+              disabled={generatingVideo || posePicker}
               title="Generate video from prompt (uses canvas image as reference frame)"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
