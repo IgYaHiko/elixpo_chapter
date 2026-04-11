@@ -28,7 +28,7 @@ function FloatingTOC({ headings }) {
     return () => window.removeEventListener('scroll', onScroll);
   }, [headings]);
 
-  // Update slider position based on active item's DOM position
+  // Update slider position and auto-scroll TOC to keep active item visible
   useEffect(() => {
     if (!activeId || !listRef.current) return;
     const item = itemRefs.current[activeId];
@@ -39,6 +39,8 @@ function FloatingTOC({ headings }) {
       top: itemRect.top - listRect.top,
       height: itemRect.height,
     });
+    // Scroll the TOC list so the active item stays visible
+    item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [activeId]);
 
   return (
@@ -62,7 +64,7 @@ function FloatingTOC({ headings }) {
             <li key={h.id} ref={el => { itemRefs.current[h.id] = el; }}>
               <a
                 href={`#${h.id}`}
-                className="preview-floating-toc-link"
+                className={`preview-floating-toc-link${h.isSubpage ? ' toc-subpage-link' : ''}`}
                 style={{
                   paddingLeft: (h.level - 1) * 12,
                   color: h.id === activeId ? 'var(--text-primary)' : undefined,
@@ -73,6 +75,12 @@ function FloatingTOC({ headings }) {
                   document.getElementById(h.id)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 }}
               >
+                {h.isSubpage && (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'inline', marginRight: 4, verticalAlign: '-1px' }}>
+                    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                  </svg>
+                )}
                 {h.text}
               </a>
             </li>
@@ -92,18 +100,29 @@ function renderBlocksToHTML(blocks) {
       if (c.type === 'inlineEquation' && c.props?.latex) {
         return `<span class="preview-inline-equation" data-latex="${encodeURIComponent(c.props.latex)}"></span>`;
       }
+      if (c.type === 'dateInline' && c.props?.date) {
+        let formatted;
+        try { formatted = new Date(c.props.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+        catch { formatted = c.props.date; }
+        return `<span class="preview-date-chip"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> ${formatted}</span>`;
+      }
       if (c.type === 'mention' && c.props?.username) {
         const name = c.props.displayName || c.props.username;
         const avatar = c.props.avatarUrl
           ? `<img src="${c.props.avatarUrl}" alt="" class="mention-chip-avatar">`
           : `<span class="mention-chip-initial">${(name || '?')[0].toUpperCase()}</span>`;
-        return `<a href="/${c.props.username}" class="mention-chip">${avatar}@${name}</a>`;
+        return `<a href="/@${c.props.username}" class="mention-chip" data-username="${c.props.username}" data-avatar="${c.props.avatarUrl || ''}" data-displayname="${name}">${avatar}@${name}</a>`;
       }
       if (c.type === 'blogMention' && c.props?.slugid) {
-        return `<a href="/${c.props.slugid}" class="mention-chip">${c.props.title || 'Untitled blog'}</a>`;
+        return `<a href="/${c.props.slugid}" class="blog-mention-link"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>${c.props.title || 'Untitled blog'}</a>`;
       }
       if (c.type === 'orgMention' && c.props?.slug) {
-        return `<a href="/${c.props.slug}" class="mention-chip">@${c.props.name || c.props.slug}</a>`;
+        return `<a href="/@${c.props.slug}" class="org-mention-link"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>@${c.props.name || c.props.slug}</a>`;
+      }
+      // Links wrap child content — recurse into c.content for the link text
+      if (c.type === 'link' && c.href) {
+        const linkText = c.content ? inlineToHTML(c.content) : (c.text || c.href).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return `<a href="${c.href}">${linkText || c.href}</a>`;
       }
       let text = (c.text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       if (!text) return '';
@@ -113,14 +132,13 @@ function renderBlocksToHTML(blocks) {
       if (s.strike) text = `<del>${text}</del>`;
       if (s.code) text = `<code>${text}</code>`;
       if (s.underline) text = `<u>${text}</u>`;
-      if (c.type === 'link' && c.href) text = `<a href="${c.href}">${text}</a>`;
       if (s.textColor) text = `<span style="color:${s.textColor}">${text}</span>`;
       if (s.backgroundColor) text = `<span style="background:${s.backgroundColor};border-radius:3px;padding:0 2px">${text}</span>`;
       return text;
     }).join('');
   }
 
-  // Collect ALL headings recursively for TOC
+  // Collect ALL headings + subpages recursively for TOC
   const headings = [];
   function collectHeadings(blockList) {
     for (const block of blockList) {
@@ -130,6 +148,16 @@ function renderBlocksToHTML(blocks) {
           const id = `h-${text.trim().toLowerCase().replace(/[^\w]+/g, '-').slice(0, 40)}`;
           headings.push({ id, text: text.trim(), level: block.props?.level || 1 });
         }
+      }
+      if (block.type === 'tabsBlock') {
+        let subTabs = [];
+        try { subTabs = JSON.parse(block.props?.tabs || '[]'); } catch {}
+        subTabs.forEach(t => {
+          if (t.title) {
+            const id = `subpage-${(t.subpageId || t.title).slice(0, 20)}`;
+            headings.push({ id, text: t.title, level: 2, isSubpage: true, subpageId: t.subpageId });
+          }
+        });
       }
       if (block.children?.length) collectHeadings(block.children);
     }
@@ -169,6 +197,17 @@ function renderBlocksToHTML(blocks) {
           return `<div class="preview-mermaid-block" data-diagram="${encodeURIComponent(block.props.diagram)}"></div>${childrenHTML}`;
         }
         return childrenHTML;
+      case 'tabsBlock': {
+        let subTabs = [];
+        try { subTabs = JSON.parse(block.props?.tabs || '[]'); } catch {}
+        if (subTabs.length === 0) return childrenHTML;
+        const tabItems = subTabs.map(t => {
+          const href = t.subpageId ? `/${t.subpageId}` : '#';
+          const id = `subpage-${(t.subpageId || t.title).slice(0, 20)}`;
+          return `<a id="${id}" href="${href}" class="subpage-item" target="_blank" rel="noopener"><div class="subpage-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg></div><span class="subpage-title">${t.title}</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="subpage-arrow"><polyline points="9 18 15 12 9 6"/></svg></a>`;
+        }).join('');
+        return `<div class="subpage-block">${tabItems}</div>${childrenHTML}`;
+      }
       case 'divider':
         return `<hr class="preview-divider" />${childrenHTML}`;
       case 'codeBlock': {
@@ -263,7 +302,8 @@ function renderBlocksToHTML(blocks) {
   if (headings.length > 0) {
     const tocItems = headings.map(h => {
       const indent = (h.level - 1) * 16;
-      return `<li><a href="#${h.id}" class="preview-toc-link" style="padding-left:${indent}px">${h.text}</a></li>`;
+      const icon = h.isSubpage ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;margin-right:4px;vertical-align:-1px"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' : '';
+      return `<li><a href="#${h.id}" class="preview-toc-link${h.isSubpage ? ' toc-subpage-link' : ''}" style="padding-left:${indent}px">${icon}${h.text}</a></li>`;
     }).join('');
     tocHTML = `<div class="preview-toc-block"><p class="preview-toc-label">Table of Contents</p><ul class="preview-toc-list">${tocItems}</ul></div>`;
   }
@@ -279,6 +319,10 @@ export default function BlogPreview({ title, subtitle, coverPreview, coverZoom, 
   const contentRef = useRef(null);
   const [showBackToTop, setShowBackToTop] = useState(false);
   const linkPreview = useLinkPreview();
+  const linkPreviewRef = useRef(linkPreview);
+  linkPreviewRef.current = linkPreview;
+  const [mentionCard, setMentionCard] = useState(null);
+  const mentionTimerRef = useRef(null);
 
   useEffect(() => {
     const onScroll = () => setShowBackToTop(window.scrollY > 400);
@@ -289,14 +333,28 @@ export default function BlogPreview({ title, subtitle, coverPreview, coverZoom, 
   // Determine which HTML to use — prefer blocks-based rendering
   const renderedHTML = blocks && blocks.length > 0 ? renderBlocksToHTML(blocks) : html;
 
-  // Extract headings for floating TOC
-  const headings = (blocks || [])
-    .filter(b => b.type === 'heading' && b.content?.length > 0)
-    .map(b => {
-      const text = b.content.map(c => c.text || '').join('');
-      return { id: `h-${text.trim().toLowerCase().replace(/[^\w]+/g, '-').slice(0, 40)}`, text: text.trim(), level: b.props?.level || 1 };
-    })
-    .filter(h => h.text);
+  // Extract headings + subpages for floating TOC
+  const headings = (() => {
+    const result = [];
+    for (const b of (blocks || [])) {
+      if (b.type === 'heading' && b.content?.length > 0) {
+        const text = b.content.map(c => c.text || '').join('');
+        if (text.trim()) {
+          result.push({ id: `h-${text.trim().toLowerCase().replace(/[^\w]+/g, '-').slice(0, 40)}`, text: text.trim(), level: b.props?.level || 1 });
+        }
+      }
+      if (b.type === 'tabsBlock') {
+        let tabs = [];
+        try { tabs = JSON.parse(b.props?.tabs || '[]'); } catch {}
+        tabs.forEach(t => {
+          if (t.title) {
+            result.push({ id: `subpage-${(t.subpageId || t.title).slice(0, 20)}`, text: t.title, level: 2, isSubpage: true });
+          }
+        });
+      }
+    }
+    return result;
+  })();
 
   // Set innerHTML via ref so React never overwrites our post-processed DOM.
   // Then render KaTeX, mermaid, Shiki into the live DOM elements.
@@ -522,24 +580,55 @@ export default function BlogPreview({ title, subtitle, coverPreview, coverZoom, 
       });
     });
 
-    // ── Link preview on hover ──
+    // ── Link preview on hover (use ref to avoid stale closures) ──
     const externalLinks = root.querySelectorAll('a[href^="http"]:not(.mention-chip):not(.preview-toc-link):not(.link-preview-card)');
-    const linkEnterHandlers = [];
-    const linkLeaveHandlers = [];
+    const linkHandlers = [];
     externalLinks.forEach((link) => {
       const href = link.getAttribute('href');
       if (!href) return;
-      const onEnter = () => linkPreview.show(link, href);
-      const onLeave = () => linkPreview.hide();
+      const onEnter = () => linkPreviewRef.current.show(link, href);
+      const onLeave = () => linkPreviewRef.current.cancel();
       link.addEventListener('mouseenter', onEnter);
       link.addEventListener('mouseleave', onLeave);
-      linkEnterHandlers.push({ el: link, handler: onEnter });
-      linkLeaveHandlers.push({ el: link, handler: onLeave });
+      linkHandlers.push({ el: link, onEnter, onLeave });
+    });
+
+    // ── Mention hover cards ──
+    const mentionChips = root.querySelectorAll('.mention-chip[data-username]');
+    const mentionHandlers = [];
+    mentionChips.forEach((chip) => {
+      const onEnter = () => {
+        clearTimeout(mentionTimerRef.current);
+        mentionTimerRef.current = setTimeout(() => {
+          const rect = chip.getBoundingClientRect();
+          setMentionCard({
+            username: chip.dataset.username,
+            displayName: chip.dataset.displayname || chip.dataset.username,
+            avatar: chip.dataset.avatar || '',
+            top: rect.bottom + 6,
+            left: Math.max(8, Math.min(rect.left, window.innerWidth - 268)),
+          });
+        }, 300);
+      };
+      const onLeave = () => {
+        clearTimeout(mentionTimerRef.current);
+        mentionTimerRef.current = setTimeout(() => setMentionCard(null), 200);
+      };
+      chip.addEventListener('mouseenter', onEnter);
+      chip.addEventListener('mouseleave', onLeave);
+      mentionHandlers.push({ el: chip, onEnter, onLeave });
     });
 
     return () => {
-      linkEnterHandlers.forEach(({ el, handler }) => el.removeEventListener('mouseenter', handler));
-      linkLeaveHandlers.forEach(({ el, handler }) => el.removeEventListener('mouseleave', handler));
+      linkHandlers.forEach(({ el, onEnter, onLeave }) => {
+        el.removeEventListener('mouseenter', onEnter);
+        el.removeEventListener('mouseleave', onLeave);
+      });
+      mentionHandlers.forEach(({ el, onEnter, onLeave }) => {
+        el.removeEventListener('mouseenter', onEnter);
+        el.removeEventListener('mouseleave', onLeave);
+      });
+      clearTimeout(mentionTimerRef.current);
     };
   }, [renderedHTML, isDark]);
 
@@ -594,9 +683,19 @@ export default function BlogPreview({ title, subtitle, coverPreview, coverZoom, 
       {/* Spacer when emoji overlaps cover */}
       {pageEmoji && coverPreview && <div className="h-8" />}
 
-      {/* Author bar — above title */}
+      {/* Title */}
+      {title && (
+        <h1 className="text-[2.2em] font-extrabold leading-tight mt-6 mb-2" style={{ fontFamily: "'Source Serif 4', Georgia, serif" }}>{title}</h1>
+      )}
+
+      {/* Subtitle */}
+      {subtitle && (
+        <p className="text-xl mb-3" style={{ color: 'var(--text-muted)', fontFamily: "'Source Serif 4', Georgia, serif" }}>{subtitle}</p>
+      )}
+
+      {/* Author bar — under title */}
       {user && (
-        <div className="flex items-center gap-3 mt-3 mb-5">
+        <div className="flex items-center gap-3 mt-1 mb-2">
           <div className="flex -space-x-2">
             {user.avatar_url ? (
               <img src={user.avatar_url} alt="" className="w-7 h-7 rounded-full object-cover border-2 border-[var(--bg-app)]" />
@@ -627,7 +726,7 @@ export default function BlogPreview({ title, subtitle, coverPreview, coverZoom, 
 
       {/* Tags — under author bar */}
       {tags.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-1.5 mb-2">
           {tags.map((tag) => (
             <span key={tag} className="px-2.5 py-0.5 bg-[#9b7bf70a] rounded-full text-[12px] text-[#9b7bf7]">
               #{tag}
@@ -636,18 +735,10 @@ export default function BlogPreview({ title, subtitle, coverPreview, coverZoom, 
         </div>
       )}
 
-      {/* Gap before title */}
-      <div style={{ height: '48px' }} />
+      {/* Gap before content */}
+      <div style={{ height: '32px' }} />
 
-      {title && (
-        <h1 className="text-[2.2em] font-extrabold leading-tight mb-2" style={{ fontFamily: "'Source Serif 4', Georgia, serif" }}>{title}</h1>
-      )}
-
-      {subtitle && (
-        <p className="text-xl mb-5" style={{ color: 'var(--text-muted)', fontFamily: "'Source Serif 4', Georgia, serif" }}>{subtitle}</p>
-      )}
-
-      <div className="mt-4">
+      <div>
         {renderedHTML ? (
           <div
             ref={contentRef}
@@ -664,8 +755,35 @@ export default function BlogPreview({ title, subtitle, coverPreview, coverZoom, 
           anchorEl={linkPreview.preview.anchorEl}
           url={linkPreview.preview.url}
           onClose={linkPreview.hide}
-          onKeepAlive={linkPreview.keepAlive}
         />
+      )}
+
+      {/* Mention hover card */}
+      {mentionCard && (
+        <div
+          className="mention-hover-card"
+          style={{ top: mentionCard.top, left: mentionCard.left }}
+          onMouseEnter={() => clearTimeout(mentionTimerRef.current)}
+          onMouseLeave={() => { mentionTimerRef.current = setTimeout(() => setMentionCard(null), 150); }}
+        >
+          <div className="mention-hover-card-header">
+            {mentionCard.avatar ? (
+              <img src={mentionCard.avatar} alt="" className="mention-hover-card-avatar" />
+            ) : (
+              <div className="mention-hover-card-initial">
+                {(mentionCard.displayName || '?')[0].toUpperCase()}
+              </div>
+            )}
+            <div>
+              <div className="mention-hover-card-name">{mentionCard.displayName}</div>
+              <div className="mention-hover-card-username">@{mentionCard.username}</div>
+            </div>
+          </div>
+          <a href={`/@${mentionCard.username}`} className="mention-hover-card-link">
+            View profile
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7 17l9.2-9.2M17 17V7H7"/></svg>
+          </a>
+        </div>
       )}
     </div>
   );
