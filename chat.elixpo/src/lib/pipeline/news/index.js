@@ -16,6 +16,7 @@ import {
 } from "./images.js";
 
 const BACKUP_FILE = path.resolve("tmp/newsBackup.json");
+const CLOUDINARY_ROOT = "elixpochat/news";
 
 function ensureTmp() {
   const dir = path.resolve("tmp");
@@ -116,9 +117,12 @@ export async function runNewsPipeline(db) {
     if (item.status === "script_generated" || item.status?.includes("audio_failed")) {
       try {
         console.log(`🎙️ Using voice: ${voice} for topic ${index}`);
-        const audioBuffer = await safeRetry(() => generateVoiceover(item.script, index, voice));
-        const audioUrl = await uploadBuffer(audioBuffer, `news/${overallId}/${newsId}`, `news${index}`, "video");
+        const { buffer: audioBuffer, transcript } = await safeRetry(() => generateVoiceover(item.script, index, voice));
+        const folder = `${CLOUDINARY_ROOT}/${overallId}/${newsId}`;
+        const audioUrl = await uploadBuffer(audioBuffer, folder, `news${index}`, "video");
+        const transcriptUrl = await uploadBuffer(Buffer.from(JSON.stringify(transcript)), folder, `news${index}_transcript`, "raw");
         item.audio_url = audioUrl;
+        item.transcript_url = transcriptUrl;
         item.status = "audio_uploaded";
         item.error = null;
         items[index] = item;
@@ -138,7 +142,7 @@ export async function runNewsPipeline(db) {
       try {
         const prompt = await generateVisualPrompt(item.topic);
         const imgBuffer = await safeRetry(() => generateBannerImage(prompt));
-        const imageUrl = await uploadBuffer(imgBuffer, `news/${overallId}/${newsId}`, "newsBackground");
+        const imageUrl = await uploadBuffer(imgBuffer, `${CLOUDINARY_ROOT}/${overallId}/${newsId}`, "newsBackground");
         item.image_url = imageUrl;
         item.status = "complete";
         item.error = null;
@@ -170,11 +174,12 @@ export async function runNewsPipeline(db) {
 
     const thumbPrompt = await createCombinedVisualPrompt(completedTopics);
     const thumbBuffer = await generateThumbnailImage(thumbPrompt);
-    const thumbUrl = await uploadBuffer(thumbBuffer, `news/${overallId}`, "newsThumbnail");
+    const thumbUrl = await uploadBuffer(thumbBuffer, `${CLOUDINARY_ROOT}/${overallId}`, "newsThumbnail");
 
     const summaryText = await createCombinedNewsSummary(completedTopics);
     const dbItems = items.map((it) => ({
       audio_url: it.audio_url,
+      transcript_url: it.transcript_url,
       topic: it.topic,
       image_url: it.image_url,
       source_link: it.source_link,
@@ -184,7 +189,7 @@ export async function runNewsPipeline(db) {
     if (prevStats) {
       const prev = JSON.parse(prevStats.data);
       if (prev.latestNewsId && prev.latestNewsId !== overallId) {
-        await deleteFolder(`news/${prev.latestNewsId}`);
+        await deleteFolder(`${CLOUDINARY_ROOT}/${prev.latestNewsId}`);
       }
     }
     const statsData = JSON.stringify({
