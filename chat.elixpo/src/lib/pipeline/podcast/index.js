@@ -6,7 +6,7 @@ import { uploadBuffer } from "../storage.js";
 import { compressThumbnail, compressBanner, extractDominantColor } from "../compress.js";
 import { CLOUDINARY_PODCAST_ROOT, MODELS } from "../config.js";
 import { generateImage } from "../pollinations.js";
-import { THUMBNAIL_STYLE } from "../prompts.js";
+import { BANNER_STYLE } from "../prompts.js";
 import { fetchPodcastTopics, pickPodcastTopic } from "./topics.js";
 import { getLatestInfo, generatePodcastScript } from "./creator.js";
 import { generatePodcastSpeech } from "./audio.js";
@@ -76,7 +76,7 @@ export async function runPodcastPipeline(db) {
   if (backup.status === "topic_stored") {
     console.log("📝 Generating script...");
     const info = await getLatestInfo(topicName);
-    const result = await generatePodcastScript(info, topicName);
+    const result = await generatePodcastScript(info, topicName, topicSource);
     sections = result.sections;
     backup.script = result.script;
     backup.sections = sections;
@@ -119,13 +119,13 @@ export async function runPodcastPipeline(db) {
       const desc = imageSections[i].content;
       console.log(`  [${i + 1}/${imageSections.length}] ${desc.slice(0, 60)}...`);
       const imgBuffer = await generateImage({
-        prompt: `${desc} ${THUMBNAIL_STYLE}`,
-        width: 512,
-        height: 512,
+        prompt: `${desc} ${BANNER_STYLE}`,
+        width: 1280,
+        height: 720,
         model: MODELS.imageGen,
         seed: 300 + i,
       });
-      const compressed = compressThumbnail(imgBuffer, path.join(TMP_ROOT, "carousel", `slide_${i}`));
+      const compressed = compressBanner(imgBuffer, path.join(TMP_ROOT, "carousel", `slide_${i}`));
       fs.writeFileSync(path.join(TMP_ROOT, "carousel", `slide_${i}.jpg`), compressed);
       const url = await uploadBuffer(compressed, `${CLOUDINARY_PODCAST_ROOT}/carousel`, `slide_${i}`);
       carouselUrls.push(url);

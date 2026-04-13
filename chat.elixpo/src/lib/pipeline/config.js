@@ -14,16 +14,18 @@ export const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET || "";
 export const MODELS = {
   research: "perplexity-fast",
   scriptWriter: "openai",
-  promptWriter: "openai-fast",
+  promptWriter: "gemini-fast",
   audioSpeech: "openai-audio",
   imageGen: "zimage",
-  transcription: "whisper",
+  transcription: "scribe",
 };
 
-// ── Voices ──
+// ── Voices & Hosts ──
 export const NEWS_VOICES = ["shimmer", "ash", "shimmer", "ash", "shimmer", "ash", "shimmer"];
 export const PODCAST_VOICE_FEMALE = "shimmer";
 export const PODCAST_VOICE_MALE = "ash";
+export const PODCAST_HOST_FEMALE = "Liza";
+export const PODCAST_HOST_MALE = "Lix";
 
 // ── Limits ──
 export const MAX_NEWS_ITEMS = 7;
