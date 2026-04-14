@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
-import { chatStream, getSession } from "./search-client";
+import { chatStream, getSession, type ChatMessage } from "./search-client";
 
 export interface DisplayMessage {
   id: string;
@@ -28,12 +28,16 @@ function parseTaskBlocks(raw: string): { tasks: string[]; cleanContent: string }
 export function useChat(initialSessionId?: string) {
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [sessionId, setSessionId] = useState(initialSessionId || "");
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  // Generate session ID immediately if none provided
+  const [sessionId] = useState(() => initialSessionId || crypto.randomUUID().slice(0, 11));
+  const [chatTitle, setChatTitle] = useState("");
   const abortRef = useRef<AbortController | null>(null);
   const streamTextRef = useRef("");
 
   /** Load existing session */
   const loadSession = useCallback(async (sid: string) => {
+    setIsLoadingHistory(true);
     try {
       const history = await getSession(sid);
       const displayMsgs: DisplayMessage[] = history.map((msg, i) => {
@@ -46,22 +50,20 @@ export function useChat(initialSessionId?: string) {
         };
       });
       setMessages(displayMsgs);
-      setSessionId(sid);
+      // Derive title from first user message
+      const firstUser = displayMsgs.find((m) => m.role === "user");
+      if (firstUser) setChatTitle(firstUser.content.slice(0, 50) + (firstUser.content.length > 50 ? "..." : ""));
     } catch (err) {
       console.error("Failed to load session:", err);
     }
+    setIsLoadingHistory(false);
   }, []);
 
   /** Send a message */
   const sendMessage = useCallback(async (content: string, images?: string[]) => {
     if (!content.trim() && !images?.length) return;
 
-    // Generate session ID on first message (no separate create call needed)
-    let sid = sessionId;
-    if (!sid) {
-      sid = crypto.randomUUID().slice(0, 11);
-      setSessionId(sid);
-    }
+    const sid = sessionId;
 
     // Build user message content
     const userContent: ChatMessage["content"] = images?.length
@@ -77,6 +79,9 @@ export function useChat(initialSessionId?: string) {
       content,
       images,
     };
+
+    // Set chat title from first message
+    if (!chatTitle) setChatTitle(content.slice(0, 50) + (content.length > 50 ? "..." : ""));
 
     const assistantMsg: DisplayMessage = {
       id: `asst-${Date.now()}`,
@@ -167,12 +172,29 @@ export function useChat(initialSessionId?: string) {
     });
   }, []);
 
+  /** Retry the last user message */
+  const retryLast = useCallback(() => {
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    if (!lastUser) return;
+    // Remove last assistant message
+    setMessages((prev) => {
+      const idx = prev.findLastIndex((m) => m.role === "assistant");
+      if (idx >= 0) return prev.filter((_, i) => i !== idx);
+      return prev;
+    });
+    sendMessage(lastUser.content, lastUser.images);
+  }, [messages, sendMessage]);
+
   return {
     messages,
     isLoading,
+    isLoadingHistory,
     sessionId,
+    chatTitle,
+    setChatTitle,
     sendMessage,
     stopStreaming,
     loadSession,
+    retryLast,
   };
 }
