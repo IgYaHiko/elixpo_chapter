@@ -97,11 +97,65 @@ export default function PodcastPage() {
   const togglePlay = () => { if (!audioRef.current || audioError) return; audioRef.current.paused ? audioRef.current.play() : audioRef.current.pause(); };
   const cycleSpeed = () => { const n = speeds[(speeds.indexOf(speed) + 1) % speeds.length]; setSpeed(n); if (audioRef.current) audioRef.current.playbackRate = n; };
   const skip = (s: number) => { if (audioRef.current) audioRef.current.currentTime = Math.max(0, Math.min(duration, audioRef.current.currentTime + s)); };
-  const seekTo = (e: React.MouseEvent<HTMLDivElement>) => { if (!seekBarRef.current || !audioRef.current) return; const r = seekBarRef.current.getBoundingClientRect(); audioRef.current.currentTime = (Math.max(0, Math.min(e.clientX - r.left, r.width)) / r.width) * duration; };
+  const seekFromX = (clientX: number) => {
+    if (!seekBarRef.current || !audioRef.current) return;
+    const r = seekBarRef.current.getBoundingClientRect();
+    audioRef.current.currentTime = (Math.max(0, Math.min(clientX - r.left, r.width)) / r.width) * duration;
+  };
+  const isDragging = useRef(false);
+  const onSeekDown = (e: React.MouseEvent | React.TouchEvent) => {
+    isDragging.current = true;
+    const x = "touches" in e ? e.touches[0].clientX : e.clientX;
+    seekFromX(x);
+  };
+  useEffect(() => {
+    const onMove = (e: MouseEvent | TouchEvent) => {
+      if (!isDragging.current) return;
+      const x = "touches" in e ? e.touches[0].clientX : (e as MouseEvent).clientX;
+      seekFromX(x);
+    };
+    const onUp = () => { isDragging.current = false; };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    window.addEventListener("touchmove", onMove);
+    window.addEventListener("touchend", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onUp);
+    };
+  });
   const fmt = (s: number) => { s = Math.max(0, Math.floor(s)); return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`; };
   const pct = duration > 0 ? (currentTime / duration) * 100 : 0;
-  const speechEntries = timeline.filter((e) => e.type === "male" || e.type === "female");
   const faviconUrl = sourceDomain ? `https://www.google.com/s2/favicons?domain=${sourceDomain}&sz=64` : "";
+
+  // Dynamic subtitle — compute active chunk from currentTime on every tick
+  interface SubLine { text: string; speaker: "male" | "female"; start: number; end: number; }
+  const [activeSubLine, setActiveSubLine] = useState<SubLine | null>(null);
+
+  useEffect(() => {
+    const t = currentTime;
+    const entry = timeline.find((e) => (e.type === "male" || e.type === "female") && t >= e.start && t < e.end);
+    if (!entry) { setActiveSubLine((p) => p ? null : p); return; }
+
+    const words = entry.content.split(/\s+/);
+    const chunks: string[] = [];
+    let cur = "";
+    for (const w of words) {
+      if (cur.length + w.length + 1 > 50 && cur) { chunks.push(cur); cur = w; }
+      else cur = cur ? cur + " " + w : w;
+    }
+    if (cur) chunks.push(cur);
+
+    const progress = (t - entry.start) / (entry.end - entry.start);
+    const idx = Math.min(Math.floor(progress * chunks.length), chunks.length - 1);
+
+    setActiveSubLine((prev) => {
+      if (prev?.text === chunks[idx]) return prev;
+      return { text: chunks[idx], speaker: entry.type as "male" | "female", start: entry.start, end: entry.end };
+    });
+  }, [currentTime, timeline]);
 
   return (
     <section className="relative h-screen w-screen overflow-hidden bg-black">
@@ -154,27 +208,24 @@ export default function PodcastPage() {
         )}
 
         {/* Rolling subtitle — single line above player */}
-        {showCaptions && (() => {
-          const activeEntry = activeIdx >= 0 ? timeline[activeIdx] : null;
-          return (
-            <div className="flex-shrink-0 px-6 mb-2">
-              <div className="max-w-lg mx-auto text-center min-h-[48px] flex flex-col items-center justify-end">
-                {activeEntry && (activeEntry.type === "male" || activeEntry.type === "female") ? (
-                  <>
-                    <span className={`text-[9px] uppercase tracking-widest font-bold mb-1 ${activeEntry.type === "female" ? "text-pink-400/70" : "text-blue-400/70"}`}>
-                      {activeEntry.type === "female" ? "Liza" : "Lix"}
-                    </span>
-                    <p key={activeIdx} className="text-sm text-white/80 font-medium leading-snug animate-[fadeUp_0.3s_ease-out]">
-                      {activeEntry.content.length > 120 ? activeEntry.content.slice(0, 120) + "..." : activeEntry.content}
-                    </p>
-                  </>
-                ) : (
-                  <p className="text-xs text-white/20 italic">{loaded && !isPlaying ? "Press play" : ""}</p>
-                )}
-              </div>
+        {showCaptions && (
+          <div className="flex-shrink-0 px-6 mb-2">
+            <div className="max-w-lg mx-auto text-center min-h-[52px] flex flex-col items-center justify-end">
+              {activeSubLine ? (
+                <>
+                  <span className={`text-[9px] uppercase tracking-widest font-bold mb-1 transition-colors duration-200 ${activeSubLine.speaker === "female" ? "text-pink-400/70" : "text-blue-400/70"}`}>
+                    {activeSubLine.speaker === "female" ? "Liza" : "Lix"}
+                  </span>
+                  <p key={`${activeSubLine.start}-${activeSubLine.text.slice(0,20)}`} className="text-sm text-white/85 font-medium leading-snug animate-[fadeUp_0.25s_ease-out]">
+                    {activeSubLine.text}
+                  </p>
+                </>
+              ) : (
+                <p className="text-xs text-white/20 italic">{loaded && !isPlaying ? "Press play" : "\u00A0"}</p>
+              )}
             </div>
-          );
-        })()}
+          </div>
+        )}
 
         {/* ═══ PLAYER ═══ */}
         <div className="flex-shrink-0 px-4 pb-6 pt-3">
@@ -207,7 +258,7 @@ export default function PodcastPage() {
             {/* Seek */}
             <div className="flex items-center gap-3 mb-4">
               <span className="text-[10px] text-white/30 font-mono w-9 text-right">{fmt(currentTime)}</span>
-              <div ref={seekBarRef} onClick={seekTo} className="flex-1 h-1 rounded-full cursor-pointer relative group hover:h-1.5 transition-all" style={{ background: "rgba(255,255,255,0.08)" }}>
+              <div ref={seekBarRef} onMouseDown={onSeekDown} onTouchStart={onSeekDown} className="flex-1 h-1 rounded-full cursor-pointer relative group hover:h-1.5 transition-all" style={{ background: "rgba(255,255,255,0.08)" }}>
                 <div className="absolute inset-y-0 left-0 rounded-full bg-white/80 transition-all" style={{ width: `${pct}%` }} />
                 <div className="absolute w-3 h-3 rounded-full bg-white -top-1 shadow-lg opacity-0 group-hover:opacity-100 transition-opacity" style={{ left: `calc(${pct}% - 6px)` }} />
               </div>
