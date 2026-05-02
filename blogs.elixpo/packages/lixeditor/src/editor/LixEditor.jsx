@@ -1,6 +1,12 @@
 'use client';
 
-import { BlockNoteSchema, defaultBlockSpecs, defaultInlineContentSpecs, createCodeBlockSpec } from '@blocknote/core';
+import {
+  BlockNoteSchema,
+  defaultBlockSpecs,
+  defaultInlineContentSpecs,
+  createCodeBlockSpec,
+  filterSuggestionItems,
+} from '@blocknote/core';
 import {
   useCreateBlockNote,
   SuggestionMenuController,
@@ -278,7 +284,41 @@ const LixEditor = forwardRef(function LixEditor({
     };
   }, [f.linkPreview]);
 
+  // Ctrl+D / Cmd+D: insert today's date as an inline chip at the cursor.
+  // Only fires when focus is inside the editor and the dates feature is on.
+  useEffect(() => {
+    if (!f.dates || !editor) return;
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+
+    const onKey = (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.key.toLowerCase() !== 'd') return;
+      // Only intercept when the editable area has focus.
+      const active = document.activeElement;
+      if (!active || !wrapper.contains(active)) return;
+
+      e.preventDefault();
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        editor._tiptapEditor.commands.insertContent({
+          type: 'dateInline',
+          attrs: { date: today },
+        });
+      } catch (err) {
+        console.warn('[LixEditor] insert date failed:', err);
+      }
+    };
+
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [editor, f.dates]);
+
   // Slash menu items
+  // Use BlockNote's `filterSuggestionItems` helper so the search also
+  // covers `aliases` / `subtext` / `group` (the previous custom filter
+  // checked title only, which produced weird half-rendered groups when
+  // BlockNote items had no `title` field for the current schema).
   const getItems = useCallback(async (query) => {
     const defaults = getDefaultReactSlashMenuItems(editor)
       .filter(item => !['video', 'audio', 'file'].includes(item.key));
@@ -290,6 +330,7 @@ const LixEditor = forwardRef(function LixEditor({
         title: 'Block Equation',
         subtext: 'LaTeX block equation',
         group: 'Advanced',
+        aliases: ['equation', 'eq', 'latex', 'math', 'tex'],
         icon: <span style={{ fontSize: 16 }}>∑</span>,
         onItemClick: () => editor.insertBlocks([{ type: 'blockEquation' }], editor.getTextCursorPosition().block, 'after'),
       });
@@ -300,6 +341,7 @@ const LixEditor = forwardRef(function LixEditor({
         title: 'Diagram',
         subtext: 'Mermaid diagram (flowchart, sequence, etc.)',
         group: 'Advanced',
+        aliases: ['mermaid', 'flowchart', 'sequence', 'diagram', 'graph'],
         icon: <span style={{ fontSize: 14 }}>◇</span>,
         onItemClick: () => editor.insertBlocks([{ type: 'mermaidBlock' }], editor.getTextCursorPosition().block, 'after'),
       });
@@ -310,13 +352,49 @@ const LixEditor = forwardRef(function LixEditor({
         title: 'Table of Contents',
         subtext: 'Auto-generated document outline',
         group: 'Advanced',
+        aliases: ['toc', 'outline', 'contents'],
         icon: <span style={{ fontSize: 14 }}>☰</span>,
         onItemClick: () => editor.insertBlocks([{ type: 'tableOfContents' }], editor.getTextCursorPosition().block, 'after'),
       });
     }
 
-    return [...defaults, ...custom, ...extraSlashItems]
-      .filter(item => item.title.toLowerCase().includes(query.toLowerCase()));
+    if (f.dates) {
+      custom.push({
+        title: 'Date',
+        subtext: "Insert today's date as an inline chip (Ctrl+D)",
+        group: 'Advanced',
+        aliases: ['date', 'today', 'time', 'now'],
+        icon: <span style={{ fontSize: 14 }}>📅</span>,
+        onItemClick: () => {
+          try {
+            const today = new Date().toISOString().split('T')[0];
+            editor._tiptapEditor.commands.insertContent({
+              type: 'dateInline',
+              attrs: { date: today },
+            });
+          } catch {}
+        },
+      });
+    }
+
+    const all = [...defaults, ...custom, ...extraSlashItems];
+    const filtered = filterSuggestionItems(all, query);
+
+    // BlockNote's slash-menu renderer emits a group label whenever the
+    // group string changes between consecutive items (it assumes items
+    // are pre-sorted by group). If groups interleave it produces
+    // duplicate <Label key={group}> children → React key collision and
+    // empty "Advanced Advanced" rows. Sort stably by group to keep all
+    // items in the same group contiguous.
+    const groupOrder = new Map();
+    for (const item of filtered) {
+      const g = item.group ?? '';
+      if (!groupOrder.has(g)) groupOrder.set(g, groupOrder.size);
+    }
+    return filtered
+      .map((item, i) => ({ item, i, gIdx: groupOrder.get(item.group ?? '') }))
+      .sort((a, b) => a.gIdx - b.gIdx || a.i - b.i)
+      .map((x) => x.item);
   }, [editor, f, extraSlashItems]);
 
   const handleChange = useCallback(() => {
