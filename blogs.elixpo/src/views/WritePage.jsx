@@ -430,6 +430,8 @@ export default function WritePage({ slugid }) {
   const [userOrgs, setUserOrgs] = useState([]);
   const [hasUnsavedEdits, setHasUnsavedEdits] = useState(false);
   const hadUserGestureRef = useRef(false);
+  const bypassUnloadRef = useRef(false); // set during publish redirect to skip the leave prompt
+  const dirtyRef = useRef(false); // true when there are edits not yet flushed to the cloud
   const isPublished = blogVersion?.isPublished;
   const [coverZoom, setCoverZoom] = useState(1);
   const [coverPos, setCoverPos] = useState({ x: 50, y: 50 });
@@ -443,6 +445,8 @@ export default function WritePage({ slugid }) {
   const [showColorPanel, setShowColorPanel] = useState(false);
   const [pageColor, setPageColor] = useState(null);
   const [slug, setSlug] = useState('');
+  const [slugManual, setSlugManual] = useState(false); // user typed a custom slug → stop auto-deriving from title
+  const [slugAvail, setSlugAvail] = useState({ state: 'idle' }); // idle | checking | available | taken
   const [publishing, setPublishing] = useState(false);
   const [showOwnerDropdown, setShowOwnerDropdown] = useState(false);
   const [inviteUsername, setInviteUsername] = useState('');
@@ -453,6 +457,7 @@ export default function WritePage({ slugid }) {
   const [collabLock, setCollabLock] = useState(null);
   const [collabLockDismissed, setCollabLockDismissed] = useState(false);
   const [showPublishConfirm, setShowPublishConfirm] = useState(false);
+  const [conflict, setConflict] = useState(null); // { message, currentVersion, status }
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [pendingLeaveUrl, setPendingLeaveUrl] = useState(null);
   const [showMdReplaceConfirm, setShowMdReplaceConfirm] = useState(false);
@@ -491,10 +496,10 @@ export default function WritePage({ slugid }) {
   }, []);
 
   // Refs to always hold latest draft data (avoids stale closures in intervals/beforeunload)
-  const draftDataRef = useRef({ title, subtitle, tags, publishAs, coverPreview, editorContent, pageEmoji });
+  const draftDataRef = useRef({ title, subtitle, tags, publishAs, coverPreview, editorContent, pageEmoji, coverPos, coverZoom });
   useEffect(() => {
-    draftDataRef.current = { title, subtitle, tags, publishAs, coverPreview, editorContent, pageEmoji };
-  }, [title, subtitle, tags, publishAs, coverPreview, editorContent, pageEmoji]);
+    draftDataRef.current = { title, subtitle, tags, publishAs, coverPreview, editorContent, pageEmoji, coverPos, coverZoom };
+  }, [title, subtitle, tags, publishAs, coverPreview, editorContent, pageEmoji, coverPos, coverZoom]);
 
   // Sync any buffered subpage drafts from localStorage to cloud
   const syncSubpageDrafts = useCallback(async () => {
@@ -542,6 +547,16 @@ export default function WritePage({ slugid }) {
       });
 
       if (res.ok) {
+        dirtyRef.current = false;
+        // Keep our known version current so our own saves aren't seen as a
+        // conflict when we later publish.
+        try {
+          const d = await res.json();
+          if (d?.updatedAt) {
+            setLastKnownUpdatedAt(d.updatedAt);
+            setBlogVersion(v => v ? { ...v, updatedAt: d.updatedAt } : v);
+          }
+        } catch {}
         if (!silent) {
           setSyncStatus('synced');
           if (showToast) {
@@ -615,9 +630,11 @@ export default function WritePage({ slugid }) {
     return true; // allowed
   }, [hasUnsavedEdits]);
 
-  // Sync before page unload + save draft (fallback for hard browser close)
+  // Silently flush the draft to localStorage + cloud on unload. We deliberately
+  // do NOT call preventDefault/returnValue — the native "Leave site?" dialog is
+  // replaced by our own in-app confirm modal (handleNavigation / link intercept).
   useEffect(() => {
-    function handleBeforeUnload(e) {
+    function handleBeforeUnload() {
       const data = draftDataRef.current;
       if (data.title || data.editorContent) {
         saveDraft(slugid, data);
@@ -628,14 +645,10 @@ export default function WritePage({ slugid }) {
       }
       // Also flush any buffered subpage drafts on unload
       try { syncSubpageDrafts(); } catch {}
-      if (hasUnsavedEdits && hadUserGestureRef.current) {
-        e.preventDefault();
-        e.returnValue = '';
-      }
     }
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [slugid, hasUnsavedEdits, syncSubpageDrafts]);
+  }, [slugid, syncSubpageDrafts]);
 
   // Intercept clicks on <a> tags within the editor page to show custom modal
   useEffect(() => {
@@ -665,6 +678,8 @@ export default function WritePage({ slugid }) {
         if (draft.tags) setTags(draft.tags);
         if (draft.publishAs) setPublishAs(draft.publishAs);
         if (draft.coverPreview) setCoverPreview(draft.coverPreview);
+        if (draft.coverPos) setCoverPos(draft.coverPos);
+        if (Number.isFinite(draft.coverZoom)) setCoverZoom(draft.coverZoom);
         if (draft.editorContent) setEditorContent(draft.editorContent);
         if (draft.pageEmoji) setPageEmoji(draft.pageEmoji);
         if (draft.savedAt) setLastSaved(draft.savedAt);
@@ -678,10 +693,13 @@ export default function WritePage({ slugid }) {
             const blog = data.blog;
             if (blog) {
               if (blog.title) setTitle(blog.title);
+              if (blog.slug) { setSlug(blog.slug); setSlugManual(true); }
               if (blog.subtitle) setSubtitle(blog.subtitle);
               if (blog.tags?.length) setTags(blog.tags);
               if (blog.published_as) setPublishAs(blog.published_as);
               if (blog.cover_image_r2_key) setCoverPreview(blog.cover_image_r2_key);
+              if (Number.isFinite(blog.cover_pos_x) && Number.isFinite(blog.cover_pos_y)) setCoverPos({ x: blog.cover_pos_x, y: blog.cover_pos_y });
+              if (Number.isFinite(blog.cover_zoom)) setCoverZoom(blog.cover_zoom);
               if (blog.page_emoji) setPageEmoji(blog.page_emoji);
               if (blog.content) {
                 const contentStr = typeof blog.content === 'string' ? blog.content : JSON.stringify(blog.content);
@@ -703,14 +721,26 @@ export default function WritePage({ slugid }) {
   useEffect(() => {
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     setHasUnsavedEdits(true);
+    dirtyRef.current = true;
     autoSaveTimer.current = setTimeout(() => {
       if (title || editorContent) {
-        saveDraft(slugid, { title, subtitle, tags, publishAs, coverPreview, editorContent, pageEmoji });
+        saveDraft(slugid, { title, subtitle, tags, publishAs, coverPreview, editorContent, pageEmoji, coverPos, coverZoom });
         setLastSaved(Date.now());
       }
     }, 2000);
     return () => clearTimeout(autoSaveTimer.current);
-  }, [title, subtitle, tags, publishAs, coverPreview, editorContent, pageEmoji, slugid]);
+  }, [title, subtitle, tags, publishAs, coverPreview, editorContent, pageEmoji, coverPos, coverZoom, slugid]);
+
+  // Background cloud flush — localStorage is the instant buffer, but beforeunload/
+  // sendBeacon is unreliable, so flush unsynced edits to the cloud every 20s.
+  // This protects against tab crashes and makes drafts available cross-device.
+  useEffect(() => {
+    if (draftLoading) return;
+    const id = setInterval(() => {
+      if (dirtyRef.current) syncToCloud({ silent: true });
+    }, 20000);
+    return () => clearInterval(id);
+  }, [draftLoading, syncToCloud]);
 
   const handleCoverSelect = (dataUrl) => {
     setCoverPreview(dataUrl);
@@ -788,8 +818,10 @@ export default function WritePage({ slugid }) {
     return () => window.removeEventListener('keydown', handleKey);
   }, [switchMode, mode]);
 
-  // Auto-generate slug from title
+  // Auto-generate slug from title — unless the user set a custom one, or the blog
+  // is already published (its slug is locked and can't change).
   useEffect(() => {
+    if (slugManual || isPublished) return;
     if (!title.trim()) { setSlug(''); return; }
     const generated = title
       .toLowerCase()
@@ -799,7 +831,23 @@ export default function WritePage({ slugid }) {
       .slice(0, 60)
       .replace(/^-|-$/g, '');
     setSlug(generated || slugid);
-  }, [title, slugid]);
+  }, [title, slugid, slugManual, isPublished]);
+
+  // Live slug-availability check, scoped to the chosen owner. Skipped for
+  // already-published blogs (their slug is locked).
+  useEffect(() => {
+    if (isPublished || !slug) { setSlugAvail({ state: 'idle' }); return; }
+    setSlugAvail({ state: 'checking' });
+    const t = setTimeout(async () => {
+      try {
+        const qs = new URLSearchParams({ slug, publishAs, excludeId: slugid });
+        const res = await fetch(`/api/blogs/slug-check?${qs}`);
+        const d = await res.json();
+        setSlugAvail(d.available ? { state: 'available' } : { state: 'taken', reason: d.reason });
+      } catch { setSlugAvail({ state: 'idle' }); }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [slug, publishAs, isPublished, slugid]);
 
   // Load collaborators
   useEffect(() => {
@@ -849,7 +897,7 @@ export default function WritePage({ slugid }) {
   }, [slugid]);
 
   const handleSaveDraft = async () => {
-    saveDraft(slugid, { title, subtitle, tags, publishAs, coverPreview, editorContent, pageEmoji });
+    saveDraft(slugid, { title, subtitle, tags, publishAs, coverPreview, editorContent, pageEmoji, coverPos, coverZoom });
     setLastSaved(Date.now());
     setShowPublishMenu(false);
     syncToCloud({ showToast: true });
@@ -975,17 +1023,24 @@ export default function WritePage({ slugid }) {
     if (!title.trim() || publishing) return;
     setPublishing(true);
     setShowPublishMenu(false);
+    // Flush any buffered subpage drafts so they ship with the post.
+    try { await syncSubpageDrafts(); } catch {}
     try {
       const res = await fetch('/api/blogs/publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slugid, title, subtitle, tags, publishAs, editorContent, pageEmoji, coverUrl: coverPreview, status: targetStatus, lastKnownUpdatedAt }),
+        body: JSON.stringify({ slugid, title, subtitle, tags, publishAs, editorContent, pageEmoji, coverUrl: coverPreview, coverPos, coverZoom, slug, status: targetStatus, lastKnownUpdatedAt }),
       });
 
       if (res.status === 409) {
-        // Conflict — someone else updated
+        // Conflict — upstream changed since we loaded. Show a custom modal with
+        // a Sync option (adopt the latest version, then this publish wins).
         const data = await res.json();
-        alert(data.message || 'This blog was updated by someone else. Please reload and try again.');
+        setConflict({
+          message: data.message || 'This blog was updated since you last synced.',
+          currentVersion: data.currentVersion,
+          status: targetStatus,
+        });
         setPublishing(false);
         return;
       }
@@ -996,8 +1051,11 @@ export default function WritePage({ slugid }) {
         setBlogVersion(v => v ? { ...v, isPublished: true, updatedAt: data.updatedAt, publishedAt: data.updatedAt, isDraftAhead: false } : v);
         setHasUnsavedEdits(false);
         setShowPublishPanel(false);
-        // Redirect to published blog
+        // Redirect to published blog. Suppress the beforeunload leave-prompt —
+        // state updates above haven't flushed yet, so the handler would still
+        // see hasUnsavedEdits=true and prompt. Keep the overlay up through nav.
         if (data.url) {
+          bypassUnloadRef.current = true;
           window.location.href = data.url;
           return;
         }
@@ -1016,7 +1074,7 @@ export default function WritePage({ slugid }) {
       await fetch('/api/blogs/publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slugid, title, subtitle, tags, publishAs, editorContent, pageEmoji, status: 'unlisted', lastKnownUpdatedAt }),
+        body: JSON.stringify({ slugid, title, subtitle, tags, publishAs, editorContent, pageEmoji, slug, status: 'unlisted', lastKnownUpdatedAt }),
       });
       setShowPublishPanel(false);
     } catch { /* silent */ }
@@ -1392,8 +1450,8 @@ export default function WritePage({ slugid }) {
                             </svg>
                           </button>
                         </div>
-                        {/* Drag hint */}
-                        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-[var(--text-primary)]/50 bg-black/30 backdrop-blur rounded-full px-3 py-1 pointer-events-none select-none">
+                        {/* Drag hint — pill is always dark, so keep the text light in any theme */}
+                        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-white/80 bg-black/40 backdrop-blur rounded-full px-3 py-1 pointer-events-none select-none">
                           Drag to reposition
                         </div>
                       </div>
@@ -1852,6 +1910,45 @@ export default function WritePage({ slugid }) {
             )}
           </div>
 
+          {/* URL slug — editable before publish, locked after */}
+          <div>
+            <label className="text-[12px] font-medium mb-2 block" style={{ color: 'var(--text-muted)' }}>
+              URL slug
+              {isPublished && <span className="ml-1.5 text-[10px] font-normal" style={{ color: 'var(--text-faint)' }}>(locked)</span>}
+            </label>
+            <div className="flex items-center gap-1 rounded-lg px-3 py-2.5 text-[13px]" style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border-default)', opacity: isPublished ? 0.7 : 1 }}>
+              <span className="shrink-0" style={{ color: 'var(--text-faint)' }}>
+                /{publishAs === 'personal' ? username : (userOrgs.find(o => `org:${o.id}` === publishAs)?.slug || '')}/
+              </span>
+              <input
+                type="text"
+                value={slug}
+                disabled={isPublished}
+                onChange={(e) => { setSlugManual(true); setSlug(e.target.value.toLowerCase().replace(/[^\w-]+/g, '-').replace(/-+/g, '-').slice(0, 60)); }}
+                className="flex-1 min-w-0 bg-transparent outline-none disabled:cursor-not-allowed"
+                style={{ color: 'var(--text-primary)' }}
+                placeholder="my-post"
+              />
+              {isPublished && <ion-icon name="lock-closed" style={{ fontSize: '12px', color: 'var(--text-faint)' }} />}
+            </div>
+            {!isPublished && (
+              <p
+                className="text-[11px] mt-1"
+                style={{
+                  color:
+                    slugAvail.state === 'available' ? '#4ade80'
+                    : slugAvail.state === 'taken' ? '#f87171'
+                    : 'var(--text-faint)',
+                }}
+              >
+                {slugAvail.state === 'checking' ? 'Checking…'
+                  : slugAvail.state === 'available' ? '✓ Available in this space'
+                  : slugAvail.state === 'taken' ? `✗ ${slugAvail.reason || 'Taken'} — a number will be appended`
+                  : 'Unique within your account or the selected org.'}
+              </p>
+            )}
+          </div>
+
           {/* Tags */}
           <div>
             <label className="text-[12px] font-medium mb-2 block" style={{ color: 'var(--text-muted)' }}>Tags (up to 5) <span className="font-normal" style={{ color: 'var(--text-faint)' }}>— press Enter to attach</span></label>
@@ -2045,6 +2142,52 @@ export default function WritePage({ slugid }) {
           }}
           onCancel={() => { setShowLeaveConfirm(false); setPendingLeaveUrl(null); }}
         />
+      )}
+
+      {/* Publish conflict — upstream changed. Offer Sync (adopt latest + retry). */}
+      {conflict && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 px-4" onClick={() => setConflict(null)}>
+          <div
+            className="w-full max-w-sm rounded-2xl p-6"
+            style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-default)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-[17px] font-bold text-[var(--text-primary)] mb-1">Out of sync</h3>
+            <p className="text-[13px] text-[var(--text-muted)] mb-5 leading-relaxed">{conflict.message}</p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConflict(null)}
+                className="px-4 py-2 text-[13px] rounded-full"
+                style={{ color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}
+              >
+                Keep editing
+              </button>
+              <button
+                onClick={() => {
+                  const status = conflict.status;
+                  if (conflict.currentVersion) setLastKnownUpdatedAt(conflict.currentVersion);
+                  setConflict(null);
+                  doPublish(status);
+                }}
+                className="px-4 py-2 text-[13px] font-semibold rounded-full text-white"
+                style={{ background: 'linear-gradient(135deg, #9b7bf7 0%, #8b6ae6 100%)' }}
+              >
+                Sync &amp; publish
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Publishing progress overlay — kept up through the redirect to the post */}
+      {publishing && (
+        <div className="fixed inset-0 z-[300] flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="w-10 h-10 border-[3px] border-[#9b7bf7] border-t-transparent rounded-full animate-spin mb-5" />
+          <p className="text-[15px] font-semibold text-white">
+            {isPublished ? 'Updating your post…' : 'Publishing your post…'}
+          </p>
+          <p className="text-[13px] text-white/60 mt-1">Syncing to the cloud, this only takes a moment.</p>
+        </div>
       )}
     </div>
   );

@@ -18,7 +18,6 @@ function FollowButton({ username }) {
   const { user: currentUser } = useAuth();
   const [following, setFollowing] = useState(false);
   const [isSelf, setIsSelf] = useState(false);
-  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -32,25 +31,25 @@ function FollowButton({ username }) {
 
   if (isSelf) return null;
 
-  const toggle = async () => {
+  const toggle = () => {
     // Not signed in → send to sign-in, then back here to follow.
     if (!currentUser) {
       const next = typeof window !== 'undefined' ? window.location.pathname : `/${username}`;
       window.location.href = `/sign-in?next=${encodeURIComponent(next)}`;
       return;
     }
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/users/${encodeURIComponent(username)}/follow`, { method: following ? 'DELETE' : 'POST' });
-      if (res.ok) { const d = await res.json(); setFollowing(!!d.following); }
-    } catch {}
-    setLoading(false);
+    // Optimistic: flip instantly, write in the background, revert on failure.
+    const wasFollowing = following;
+    setFollowing(!wasFollowing);
+    fetch(`/api/users/${encodeURIComponent(username)}/follow`, { method: wasFollowing ? 'DELETE' : 'POST' })
+      .then(r => (r.ok ? r.json() : Promise.reject()))
+      .then(d => setFollowing(!!d.following))
+      .catch(() => setFollowing(wasFollowing));
   };
 
   return (
     <button
       onClick={toggle}
-      disabled={loading}
       className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-[13px] font-semibold transition-all shrink-0 disabled:opacity-60 ${
         following
           ? 'bg-[var(--bg-surface)] border border-[var(--border-default)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:border-[#9b7bf7]/50'
@@ -159,9 +158,12 @@ export default function HandlePage({ path }) {
             tags={blog.tags || []}
             blocks={blocks}
             coverPreview={blog.cover_image_r2_key || generateBlogBanner(blog.id || blog.slug)}
+            coverPos={{ x: blog.cover_pos_x ?? 50, y: blog.cover_pos_y ?? 50 }}
+            coverZoom={blog.cover_zoom ?? 1}
             user={{ username: blog.author_username, display_name: blog.author_name, avatar_url: blog.author_avatar }}
             org={data.owner?.type === 'org' ? { name: data.owner.name, slug: data.owner.slug, logo_url: data.owner.logo_url || data.owner.logo_r2_key } : null}
             coAuthorCount={blog.co_author_count || 0}
+            coAuthors={blog.co_authors || []}
             wordCount={wc}
           />
 
@@ -367,7 +369,7 @@ export default function HandlePage({ path }) {
           {(data.blogs || []).length > 0 ? (
             <div className="space-y-2.5">
               {data.blogs.map(b => (
-                <Link key={b.id} href={`/${u.username}/${b.slug}`}
+                <Link key={b.id} href={`/${b.author_username || u.username}/${b.slug}`}
                   className="block p-4 bg-[var(--card-bg)] border border-[var(--border-default)] rounded-xl hover:border-[var(--border-default)] transition-colors group">
                   <div className="flex items-start gap-3">
                     {b.cover_image_r2_key && (
