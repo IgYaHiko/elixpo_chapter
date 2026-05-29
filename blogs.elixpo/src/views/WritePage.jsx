@@ -447,6 +447,7 @@ export default function WritePage({ slugid }) {
   const [slug, setSlug] = useState('');
   const [slugManual, setSlugManual] = useState(false); // user typed a custom slug → stop auto-deriving from title
   const [slugAvail, setSlugAvail] = useState({ state: 'idle' }); // idle | checking | available | taken
+  const [isOwner, setIsOwner] = useState(true); // owner (author / org admin) — only owners may change a published slug
   const [publishing, setPublishing] = useState(false);
   const [showOwnerDropdown, setShowOwnerDropdown] = useState(false);
   const [inviteUsername, setInviteUsername] = useState('');
@@ -466,18 +467,23 @@ export default function WritePage({ slugid }) {
 
   const username = user?.username || 'you';
 
+  // The URL param (`slugid`) is the human slug or a new-blog id — client-facing.
+  // `blogId` is the canonical DB id used for every read/write; it's resolved from
+  // the server on load (for slug URLs) and defaults to the param for new blogs.
+  const [blogId, setBlogId] = useState(slugid);
+
   // Real-time collaboration (enabled when blog has co-authors)
   const hasCollaborators = collaborators.length > 0;
   const { collaboration: collabConfig, isConnected: collabConnected, connectedUsers, error: collabError, needsSeed, clearSeed } = useCollaboration({
-    blogId: slugid,
+    blogId,
     user,
     enabled: hasCollaborators,
   });
 
   // Check collab status / lock on mount when collaborators exist
   useEffect(() => {
-    if (!slugid || !hasCollaborators) return;
-    fetch(`/api/collab/status?blogId=${slugid}`)
+    if (!blogId || !hasCollaborators) return;
+    fetch(`/api/collab/status?blogId=${blogId}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (d?.isLocked && d.lockedBy) {
@@ -485,7 +491,7 @@ export default function WritePage({ slugid }) {
         }
       })
       .catch(() => {});
-  }, [slugid, hasCollaborators]);
+  }, [blogId, hasCollaborators]);
 
   // Track user gesture so beforeunload dialog only fires after interaction
   useEffect(() => {
@@ -531,7 +537,7 @@ export default function WritePage({ slugid }) {
     if (!data.title && !data.editorContent) return;
 
     // Always save to localStorage first
-    saveDraft(slugid, data);
+    saveDraft(blogId, data);
     setLastSaved(Date.now());
 
     if (!silent) setSyncStatus('syncing');
@@ -543,7 +549,7 @@ export default function WritePage({ slugid }) {
       const res = await fetch('/api/blogs/draft', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slugid, ...data }),
+        body: JSON.stringify({ slugid: blogId, ...data }),
       });
 
       if (res.ok) {
@@ -577,7 +583,7 @@ export default function WritePage({ slugid }) {
         setTimeout(() => setSyncStatus('idle'), 5000);
       }
     }
-  }, [slugid, syncSubpageDrafts]);
+  }, [blogId, syncSubpageDrafts]);
 
   // Ctrl+S → save + sync, Ctrl+O → import markdown, Ctrl+D → insert date
   useEffect(() => {
@@ -637,9 +643,9 @@ export default function WritePage({ slugid }) {
     function handleBeforeUnload() {
       const data = draftDataRef.current;
       if (data.title || data.editorContent) {
-        saveDraft(slugid, data);
+        saveDraft(blogId, data);
         try {
-          const blob = new Blob([JSON.stringify({ slugid, ...data })], { type: 'application/json' });
+          const blob = new Blob([JSON.stringify({ slugid: blogId, ...data })], { type: 'application/json' });
           navigator.sendBeacon('/api/blogs/draft', blob);
         } catch {}
       }
@@ -648,7 +654,7 @@ export default function WritePage({ slugid }) {
     }
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [slugid, syncSubpageDrafts]);
+  }, [blogId, syncSubpageDrafts]);
 
   // Intercept clicks on <a> tags within the editor page to show custom modal
   useEffect(() => {
@@ -669,51 +675,69 @@ export default function WritePage({ slugid }) {
   }, [hasUnsavedEdits]);
 
   useEffect(() => {
-    // Try local draft first, then fetch from server
     const timer = setTimeout(async () => {
-      const draft = loadDraft(slugid);
-      if (draft && draft.editorContent) {
-        if (draft.title) setTitle(draft.title);
-        if (draft.subtitle) setSubtitle(draft.subtitle);
-        if (draft.tags) setTags(draft.tags);
-        if (draft.publishAs) setPublishAs(draft.publishAs);
-        if (draft.coverPreview) setCoverPreview(draft.coverPreview);
-        if (draft.coverPos) setCoverPos(draft.coverPos);
-        if (Number.isFinite(draft.coverZoom)) setCoverZoom(draft.coverZoom);
-        if (draft.editorContent) setEditorContent(draft.editorContent);
-        if (draft.pageEmoji) setPageEmoji(draft.pageEmoji);
-        if (draft.savedAt) setLastSaved(draft.savedAt);
-        setDraftLoading(false);
-      } else {
-        // No local draft — try loading from server (for editing published blogs)
-        try {
-          const res = await fetch(`/api/blogs/draft?slugid=${slugid}`);
-          if (res.ok) {
-            const data = await res.json();
-            const blog = data.blog;
-            if (blog) {
-              if (blog.title) setTitle(blog.title);
-              if (blog.slug) { setSlug(blog.slug); setSlugManual(true); }
-              if (blog.subtitle) setSubtitle(blog.subtitle);
-              if (blog.tags?.length) setTags(blog.tags);
-              if (blog.published_as) setPublishAs(blog.published_as);
-              if (blog.cover_image_r2_key) setCoverPreview(blog.cover_image_r2_key);
-              if (Number.isFinite(blog.cover_pos_x) && Number.isFinite(blog.cover_pos_y)) setCoverPos({ x: blog.cover_pos_x, y: blog.cover_pos_y });
-              if (Number.isFinite(blog.cover_zoom)) setCoverZoom(blog.cover_zoom);
-              if (blog.page_emoji) setPageEmoji(blog.page_emoji);
-              if (blog.content) {
-                const contentStr = typeof blog.content === 'string' ? blog.content : JSON.stringify(blog.content);
-                setEditorContent(contentStr);
-              }
-            }
-            if (data.version) {
-              setBlogVersion(data.version);
-              setLastKnownUpdatedAt(data.version.updatedAt);
-            }
-          }
-        } catch { /* no server data, start fresh */ }
-        setDraftLoading(false);
+      // Resolve the URL param (slug or id) against the server, which returns the
+      // canonical blog id. localStorage is keyed by that id, so look it up after.
+      let cloud = null, version = null;
+      try {
+        const res = await fetch(`/api/blogs/draft?slugid=${encodeURIComponent(slugid)}`);
+        if (res.ok) {
+          const data = await res.json();
+          cloud = data.blog || null;
+          version = data.version || null;
+        }
+      } catch { /* offline or brand-new blog */ }
+
+      const resolvedId = cloud?.id || slugid;
+      if (resolvedId !== blogId) setBlogId(resolvedId);
+      const local = loadDraft(resolvedId);
+
+      if (cloud) {
+        // Metadata + version always from the server (authoritative).
+        if (cloud.title) setTitle(cloud.title);
+        if (cloud.slug) { setSlug(cloud.slug); setSlugManual(true); }
+        setIsOwner(cloud.is_owner !== false);
+        if (cloud.subtitle) setSubtitle(cloud.subtitle);
+        if (cloud.tags?.length) setTags(cloud.tags);
+        if (cloud.published_as) setPublishAs(cloud.published_as);
+        if (cloud.cover_image_r2_key) setCoverPreview(cloud.cover_image_r2_key);
+        if (Number.isFinite(cloud.cover_pos_x) && Number.isFinite(cloud.cover_pos_y)) setCoverPos({ x: cloud.cover_pos_x, y: cloud.cover_pos_y });
+        if (Number.isFinite(cloud.cover_zoom)) setCoverZoom(cloud.cover_zoom);
+        if (cloud.page_emoji) setPageEmoji(cloud.page_emoji);
+        if (version) { setBlogVersion(version); setLastKnownUpdatedAt(version.updatedAt); }
+
+        // Content: use the server copy unless localStorage holds strictly newer
+        // unsaved edits (saved after the last cloud sync). This restores published
+        // posts (incl. mentions) reliably while still preserving local work.
+        const cloudUpdatedMs = (version?.updatedAt || 0) * 1000;
+        const localNewer = local?.editorContent && (local.savedAt || 0) > cloudUpdatedMs + 1500;
+        if (localNewer) {
+          if (local.title) setTitle(local.title);
+          if (local.subtitle) setSubtitle(local.subtitle);
+          if (local.tags) setTags(local.tags);
+          if (local.coverPreview) setCoverPreview(local.coverPreview);
+          if (local.coverPos) setCoverPos(local.coverPos);
+          if (Number.isFinite(local.coverZoom)) setCoverZoom(local.coverZoom);
+          if (local.pageEmoji) setPageEmoji(local.pageEmoji);
+          if (local.savedAt) setLastSaved(local.savedAt);
+          setEditorContent(local.editorContent);
+        } else if (cloud.content) {
+          setEditorContent(typeof cloud.content === 'string' ? cloud.content : JSON.stringify(cloud.content));
+        }
+      } else if (local?.editorContent) {
+        // Brand-new blog not yet on the server — use the local buffer.
+        if (local.title) setTitle(local.title);
+        if (local.subtitle) setSubtitle(local.subtitle);
+        if (local.tags) setTags(local.tags);
+        if (local.publishAs) setPublishAs(local.publishAs);
+        if (local.coverPreview) setCoverPreview(local.coverPreview);
+        if (local.coverPos) setCoverPos(local.coverPos);
+        if (Number.isFinite(local.coverZoom)) setCoverZoom(local.coverZoom);
+        if (local.pageEmoji) setPageEmoji(local.pageEmoji);
+        if (local.savedAt) setLastSaved(local.savedAt);
+        setEditorContent(local.editorContent);
       }
+      setDraftLoading(false);
     }, 80);
     return () => clearTimeout(timer);
   }, [slugid]);
@@ -724,12 +748,12 @@ export default function WritePage({ slugid }) {
     dirtyRef.current = true;
     autoSaveTimer.current = setTimeout(() => {
       if (title || editorContent) {
-        saveDraft(slugid, { title, subtitle, tags, publishAs, coverPreview, editorContent, pageEmoji, coverPos, coverZoom });
+        saveDraft(blogId, { title, subtitle, tags, publishAs, coverPreview, editorContent, pageEmoji, coverPos, coverZoom });
         setLastSaved(Date.now());
       }
     }, 2000);
     return () => clearTimeout(autoSaveTimer.current);
-  }, [title, subtitle, tags, publishAs, coverPreview, editorContent, pageEmoji, coverPos, coverZoom, slugid]);
+  }, [title, subtitle, tags, publishAs, coverPreview, editorContent, pageEmoji, coverPos, coverZoom, blogId]);
 
   // Background cloud flush — localStorage is the instant buffer, but beforeunload/
   // sendBeacon is unreliable, so flush unsynced edits to the cloud every 20s.
@@ -836,27 +860,28 @@ export default function WritePage({ slugid }) {
   // Live slug-availability check, scoped to the chosen owner. Skipped for
   // already-published blogs (their slug is locked).
   useEffect(() => {
-    if (isPublished || !slug) { setSlugAvail({ state: 'idle' }); return; }
+    // Drafts always check; published blogs only when the owner is changing the slug.
+    if ((isPublished && !isOwner) || !slug) { setSlugAvail({ state: 'idle' }); return; }
     setSlugAvail({ state: 'checking' });
     const t = setTimeout(async () => {
       try {
-        const qs = new URLSearchParams({ slug, publishAs, excludeId: slugid });
+        const qs = new URLSearchParams({ slug, publishAs, excludeId: blogId });
         const res = await fetch(`/api/blogs/slug-check?${qs}`);
         const d = await res.json();
         setSlugAvail(d.available ? { state: 'available' } : { state: 'taken', reason: d.reason });
       } catch { setSlugAvail({ state: 'idle' }); }
     }, 400);
     return () => clearTimeout(t);
-  }, [slug, publishAs, isPublished, slugid]);
+  }, [slug, publishAs, isPublished, isOwner, blogId]);
 
   // Load collaborators
   useEffect(() => {
-    if (!slugid) return;
-    fetch(`/api/blogs/invite?slugid=${slugid}`)
+    if (!blogId) return;
+    fetch(`/api/blogs/invite?slugid=${blogId}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d?.collaborators) setCollaborators(d.collaborators); })
       .catch(() => {});
-  }, [slugid]);
+  }, [blogId]);
 
   // Load user's orgs for owner dropdown
   useEffect(() => {
@@ -879,9 +904,9 @@ export default function WritePage({ slugid }) {
   const uploadCover = useCallback(async (blob) => {
     try {
       const formData = new FormData();
-      formData.append('file', blob, `cover_${slugid}.webp`);
+      formData.append('file', blob, `cover_${blogId}.webp`);
       formData.append('type', 'cover');
-      if (slugid) formData.append('blogId', slugid);
+      if (blogId) formData.append('blogId', blogId);
       const res = await fetch('/api/media/upload', { method: 'POST', body: formData });
       if (res.ok) {
         const data = await res.json();
@@ -894,10 +919,10 @@ export default function WritePage({ slugid }) {
       console.error('Cover upload failed:', err);
     }
     return null;
-  }, [slugid]);
+  }, [blogId]);
 
   const handleSaveDraft = async () => {
-    saveDraft(slugid, { title, subtitle, tags, publishAs, coverPreview, editorContent, pageEmoji, coverPos, coverZoom });
+    saveDraft(blogId, { title, subtitle, tags, publishAs, coverPreview, editorContent, pageEmoji, coverPos, coverZoom });
     setLastSaved(Date.now());
     setShowPublishMenu(false);
     syncToCloud({ showToast: true });
@@ -1029,7 +1054,7 @@ export default function WritePage({ slugid }) {
       const res = await fetch('/api/blogs/publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slugid, title, subtitle, tags, publishAs, editorContent, pageEmoji, coverUrl: coverPreview, coverPos, coverZoom, slug, status: targetStatus, lastKnownUpdatedAt }),
+        body: JSON.stringify({ slugid: blogId, title, subtitle, tags, publishAs, editorContent, pageEmoji, coverUrl: coverPreview, coverPos, coverZoom, slug, status: targetStatus, lastKnownUpdatedAt }),
       });
 
       if (res.status === 409) {
@@ -1074,7 +1099,7 @@ export default function WritePage({ slugid }) {
       await fetch('/api/blogs/publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slugid, title, subtitle, tags, publishAs, editorContent, pageEmoji, slug, status: 'unlisted', lastKnownUpdatedAt }),
+        body: JSON.stringify({ slugid: blogId, title, subtitle, tags, publishAs, editorContent, pageEmoji, slug, status: 'unlisted', lastKnownUpdatedAt }),
       });
       setShowPublishPanel(false);
     } catch { /* silent */ }
@@ -1088,7 +1113,7 @@ export default function WritePage({ slugid }) {
       const res = await fetch('/api/blogs/invite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slugid, username: inviteUsername.trim(), role: inviteRole }),
+        body: JSON.stringify({ slugid: blogId, username: inviteUsername.trim(), role: inviteRole }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -1105,7 +1130,7 @@ export default function WritePage({ slugid }) {
       await fetch('/api/blogs/invite', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slugid, userId }),
+        body: JSON.stringify({ slugid: blogId, userId }),
       });
       setCollaborators(prev => prev.filter(c => c.id !== userId));
     } catch { /* silent */ }
@@ -1771,7 +1796,7 @@ export default function WritePage({ slugid }) {
                       initialContent={editorContent}
                       onReady={() => setEditorReady(true)}
                       onTitleChange={(newTitle) => { setTitle(newTitle); setAiTitleKey(k => k + 1); }}
-                      blogId={slugid}
+                      blogId={blogId}
                       collaboration={collabConfig}
                       onCollabSeeded={needsSeed ? clearSeed : undefined}
                     />
@@ -1910,44 +1935,52 @@ export default function WritePage({ slugid }) {
             )}
           </div>
 
-          {/* URL slug — editable before publish, locked after */}
+          {/* URL slug — editable before publish; after publish only the owner can
+              change it (destructive — old links break). Non-owners see it locked. */}
+          {(() => {
+            const slugLocked = isPublished && !isOwner;
+            return (
           <div>
             <label className="text-[12px] font-medium mb-2 block" style={{ color: 'var(--text-muted)' }}>
               URL slug
-              {isPublished && <span className="ml-1.5 text-[10px] font-normal" style={{ color: 'var(--text-faint)' }}>(locked)</span>}
+              {slugLocked && <span className="ml-1.5 text-[10px] font-normal" style={{ color: 'var(--text-faint)' }}>(locked)</span>}
             </label>
-            <div className="flex items-center gap-1 rounded-lg px-3 py-2.5 text-[13px]" style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border-default)', opacity: isPublished ? 0.7 : 1 }}>
+            <div className="flex items-center gap-1 rounded-lg px-3 py-2.5 text-[13px]" style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border-default)', opacity: slugLocked ? 0.7 : 1 }}>
               <span className="shrink-0" style={{ color: 'var(--text-faint)' }}>
                 /{publishAs === 'personal' ? username : (userOrgs.find(o => `org:${o.id}` === publishAs)?.slug || '')}/
               </span>
               <input
                 type="text"
                 value={slug}
-                disabled={isPublished}
+                disabled={slugLocked}
                 onChange={(e) => { setSlugManual(true); setSlug(e.target.value.toLowerCase().replace(/[^\w-]+/g, '-').replace(/-+/g, '-').slice(0, 60)); }}
                 className="flex-1 min-w-0 bg-transparent outline-none disabled:cursor-not-allowed"
                 style={{ color: 'var(--text-primary)' }}
                 placeholder="my-post"
               />
-              {isPublished && <ion-icon name="lock-closed" style={{ fontSize: '12px', color: 'var(--text-faint)' }} />}
+              {slugLocked && <ion-icon name="lock-closed" style={{ fontSize: '12px', color: 'var(--text-faint)' }} />}
             </div>
-            {!isPublished && (
+            {!slugLocked && (
               <p
                 className="text-[11px] mt-1"
                 style={{
                   color:
                     slugAvail.state === 'available' ? '#4ade80'
                     : slugAvail.state === 'taken' ? '#f87171'
+                    : isPublished ? '#e8a840'
                     : 'var(--text-faint)',
                 }}
               >
                 {slugAvail.state === 'checking' ? 'Checking…'
                   : slugAvail.state === 'available' ? '✓ Available in this space'
                   : slugAvail.state === 'taken' ? `✗ ${slugAvail.reason || 'Taken'} — a number will be appended`
+                  : isPublished ? '⚠ Changing the slug breaks existing links to this post.'
                   : 'Unique within your account or the selected org.'}
               </p>
             )}
           </div>
+            );
+          })()}
 
           {/* Tags */}
           <div>
@@ -1973,29 +2006,25 @@ export default function WritePage({ slugid }) {
             )}
           </div>
 
-          {/* URL Slug — with warning for published blogs */}
+          {/* Collaborators — invite co-authors (cross-posts to their profile) */}
           <div>
-            <label className="text-[12px] font-medium mb-2 block" style={{ color: 'var(--text-muted)' }}>URL Slug</label>
-            <div className="flex items-center rounded-lg overflow-hidden" style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--input-border)' }}>
-              <span className="text-[13px] px-3 flex-shrink-0" style={{ color: 'var(--text-muted)' }}>@{username}/</span>
-              <input
-                type="text"
-                value={slug}
-                onChange={(e) => {
-                  const newSlug = e.target.value.toLowerCase().replace(/[^\w-]/g, '-').replace(/-+/g, '-');
-                  setSlug(newSlug);
-                }}
-                placeholder={slugid}
-                className="flex-1 bg-transparent py-2 pr-3 outline-none text-[13px]"
-                style={{ color: 'var(--text-primary)' }}
-              />
-            </div>
-            {isPublished && slug !== (blogVersion?._originalSlug || slug) && (
-              <p className="text-[11px] mt-1.5 flex items-center gap-1" style={{ color: '#f87171' }}>
-                <ion-icon name="warning-outline" style={{ fontSize: '13px' }} />
-                Changing the slug will permanently break the old URL. This cannot be undone.
-              </p>
-            )}
+            <label className="text-[12px] font-medium mb-2 block" style={{ color: 'var(--text-muted)' }}>Collaborators</label>
+            <button
+              onClick={() => setShowCollabPanel(true)}
+              className="w-full flex items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-[13px] transition-colors hover:border-[var(--border-hover)]"
+              style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border-default)' }}
+            >
+              <span className="flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+                <ion-icon name="people-outline" style={{ fontSize: '16px', color: 'var(--text-muted)' }} />
+                {collaborators.length > 0
+                  ? `${collaborators.length} collaborator${collaborators.length === 1 ? '' : 's'}`
+                  : 'Invite collaborators'}
+              </span>
+              <ion-icon name="chevron-forward-outline" style={{ fontSize: '14px', color: 'var(--text-faint)' }} />
+            </button>
+            <p className="text-[11px] mt-1" style={{ color: 'var(--text-faint)' }}>
+              Co-authors can view, edit, or admin — the post cross-posts to their profile.
+            </p>
           </div>
         </div>
 
@@ -2080,7 +2109,7 @@ export default function WritePage({ slugid }) {
 
       {/* Keyboard shortcuts modal */}
       {showShortcuts && <KeyboardShortcutsModal onClose={() => setShowShortcuts(false)} />}
-      {showCollabPanel && <CollaboratorPanel slugid={slugid} onClose={() => setShowCollabPanel(false)} />}
+      {showCollabPanel && <CollaboratorPanel slugid={blogId} onClose={() => setShowCollabPanel(false)} />}
 
       {/* Saved to cloud toast */}
       <AnimatePresence>
