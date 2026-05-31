@@ -32,6 +32,14 @@ export async function POST(request) {
   if ((title?.length || 0) > MAX_TITLE_LEN || (subtitle?.length || 0) > MAX_SUBTITLE_LEN) {
     return NextResponse.json({ error: 'Title or subtitle too long' }, { status: 400 });
   }
+  // Only gate the public-facing title/subtitle when actually publishing —
+  // drafts can hold work-in-progress text.
+  if (targetStatus !== 'draft') {
+    const { findProfanity } = await import('../../../../lib/validate');
+    if (findProfanity(title) || findProfanity(subtitle)) {
+      return NextResponse.json({ error: 'Title or subtitle contains language that is not allowed' }, { status: 400 });
+    }
+  }
   if (byteLength(editorContent) > MAX_BLOG_CONTENT_BYTES) {
     return NextResponse.json({ error: 'Content too large' }, { status: 413 });
   }
@@ -162,13 +170,24 @@ export async function POST(request) {
       );
     } catch {}
 
+    // Canonical, scope-aware reader URL (personal / org / collection) keyed off
+    // the PRIMARY author + org — not the publisher, so co-authors and org
+    // publishers land on the right published URL, not their own profile.
+    let url;
+    try {
+      const { getBlogCanonicalPath } = await import('../../../../lib/blogUrl');
+      url = await getBlogCanonicalPath(db, slugid);
+    } catch {
+      url = `/${session.profile?.username || 'user'}/${slug}`;
+    }
+
     return NextResponse.json({
       ok: true,
       slugid,
       slug,
       status: targetStatus,
       updatedAt: now,
-      url: `/${session.profile?.username || 'user'}/${slug}`,
+      url,
     });
   } catch (e) {
     console.error('Publish error:', e);
