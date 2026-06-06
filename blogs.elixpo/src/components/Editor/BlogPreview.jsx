@@ -329,7 +329,7 @@ function renderBlocksToHTML(blocks) {
   return html;
 }
 
-export default function BlogPreview({ title, subtitle, coverPreview, coverZoom, coverPos, pageEmoji, tags, html, blocks, user, org, coAuthorCount, coAuthors = [], wordCount, followSlot = null, memberOnly = false, featured = false, publishedAt = null, headerActions = null }) {
+export default function BlogPreview({ title, subtitle, coverPreview, coverZoom, coverPos, pageEmoji, tags, html, blocks, user, org, coAuthorCount, coAuthors = [], wordCount, followSlot = null, memberOnly = false, featured = false, publishedAt = null, headerActions = null, hideHighlights = false }) {
   const { isDark } = useTheme();
   const contentRef = useRef(null);
   const [showBackToTop, setShowBackToTop] = useState(false);
@@ -725,6 +725,17 @@ export default function BlogPreview({ title, subtitle, coverPreview, coverZoom, 
         <p className="text-xl mb-3" style={{ color: 'var(--text-muted)', fontFamily: "'Source Serif 4', Georgia, serif" }}>{subtitle}</p>
       )}
 
+      {/* Tags — directly under the title */}
+      {tags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {tags.map((tag) => (
+            <span key={tag} className="px-2.5 py-0.5 bg-[#9b7bf70a] rounded-full text-[13px] text-[#9b7bf7]">
+              #{tag}
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* Author bar — under title. Primary author + accepted co-authors, with
           stacked avatars and top-3 names (+ "N more"). */}
       {user && (() => {
@@ -782,21 +793,10 @@ export default function BlogPreview({ title, subtitle, coverPreview, coverZoom, 
         </div>
       )}
 
-      {/* Tags — under author bar */}
-      {tags.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mb-2">
-          {tags.map((tag) => (
-            <span key={tag} className="px-2.5 py-0.5 bg-[#9b7bf70a] rounded-full text-[12px] text-[#9b7bf7]">
-              #{tag}
-            </span>
-          ))}
-        </div>
-      )}
-
       {/* Gap before content */}
       <div style={{ height: '32px' }} />
 
-      <div>
+      <div className={hideHighlights ? 'hide-highlights' : ''}>
         {renderedHTML ? (
           <div
             ref={contentRef}

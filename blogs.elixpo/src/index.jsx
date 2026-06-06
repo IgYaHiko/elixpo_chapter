@@ -201,6 +201,8 @@ function AuthorStack({ authors }) {
 function FeedCardMenu({ post, onHide }) {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
+  const [fAuthor, setFAuthor] = useState(false);
+  const [fOrg, setFOrg] = useState(false);
   const ref = useRef(null);
   const author = post.author || {};
   const org = post.org || null;
@@ -212,11 +214,18 @@ function FeedCardMenu({ post, onHide }) {
     return () => document.removeEventListener('mousedown', h);
   }, [open]);
 
+  // Resolve current follow state when the menu opens, to grey out what's already followed.
+  useEffect(() => {
+    if (!open || !user) return;
+    if (author.username) fetch(`/api/users/${author.username}/follow`).then(r => r.ok ? r.json() : null).then(d => d && setFAuthor(!!d.following)).catch(() => {});
+    if (org?.slug) fetch(`/api/orgs/${org.slug}/follow`).then(r => r.ok ? r.json() : null).then(d => d && setFOrg(!!d.following)).catch(() => {});
+  }, [open, user]);
+
   const needAuth = () => { if (!user) { window.location.href = '/sign-in?next=/'; return true; } return false; };
   const post_ = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => {});
 
-  const followAuthor = () => { if (needAuth()) return; post_(`/api/users/${author.username}/follow`); setOpen(false); };
-  const followOrg = () => { if (needAuth()) return; post_(`/api/orgs/${org.slug}/follow`); setOpen(false); };
+  const followAuthor = () => { if (needAuth() || fAuthor) return; setFAuthor(true); post_(`/api/users/${author.username}/follow`); setOpen(false); };
+  const followOrg = () => { if (needAuth() || fOrg) return; setFOrg(true); post_(`/api/orgs/${org.slug}/follow`); setOpen(false); };
   const muteAuthor = () => { if (needAuth()) return; post_('/api/mutes', { targetType: 'author', targetId: post.author_id }); setOpen(false); onHide?.(post.id); };
   const muteOrg = () => { if (needAuth()) return; post_('/api/mutes', { targetType: 'org', targetId: org.id }); setOpen(false); onHide?.(post.id); };
   const muteTopics = () => { if (needAuth()) return; (post.tags || []).forEach(t => post_('/api/mutes', { targetType: 'tag', targetId: t })); setOpen(false); onHide?.(post.id); };
@@ -227,10 +236,10 @@ function FeedCardMenu({ post, onHide }) {
     post_(`/api/blogs/${post.id}/report`, { reason: 'other', detail: 'Reported from feed' });
   };
 
-  const item = (label, fn, danger, badge) => (
-    <button onClick={fn} className="w-full text-left px-4 py-2 text-[13px] flex items-center gap-2 transition-colors"
-      style={{ color: danger ? '#f87171' : 'var(--text-body)' }}
-      onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-hover)'}
+  const item = (label, fn, danger, badge, disabled) => (
+    <button onClick={disabled ? undefined : fn} disabled={disabled} className="w-full text-left px-4 py-2 text-[13px] flex items-center gap-2 transition-colors"
+      style={{ color: danger ? '#f87171' : 'var(--text-body)', opacity: disabled ? 0.4 : 1, cursor: disabled ? 'default' : 'pointer' }}
+      onMouseEnter={e => { if (!disabled) e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
       onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
       {label}{badge && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#16a34a', color: '#fff' }}>New</span>}
     </button>
@@ -243,8 +252,8 @@ function FeedCardMenu({ post, onHide }) {
       </button>
       {open && (
         <div className="absolute right-0 top-9 z-50 w-56 rounded-xl py-1.5 overflow-hidden" style={{ backgroundColor: 'var(--dropdown-bg, var(--bg-surface))', border: '1px solid var(--border-default)', boxShadow: '0 12px 40px rgba(0,0,0,0.35)' }}>
-          {item(`Follow ${author.display_name || author.username}`, followAuthor)}
-          {org && item(`Follow ${org.name}`, followOrg)}
+          {item(fAuthor ? `Following ${author.display_name || author.username}` : `Follow ${author.display_name || author.username}`, followAuthor, false, false, fAuthor)}
+          {org && item(fOrg ? `Following ${org.name}` : `Follow ${org.name}`, followOrg, false, false, fOrg)}
           <div className="my-1.5" style={{ borderTop: '1px solid var(--divider)' }} />
           {item('Mute author', muteAuthor)}
           {org && item('Mute publication', muteOrg)}
@@ -257,63 +266,79 @@ function FeedCardMenu({ post, onHide }) {
   );
 }
 
-// Action bar — clap, comment, repost, save, "..." menu.
+// Action bar — like, comment, repost, save, "..." menu.
 function FeedCardActions({ post, onHide }) {
   const { user } = useAuth();
-  const [claps, setClaps] = useState(post.clap_total || post.like_count || 0);
-  const [saved, setSaved] = useState(false);
+  const [liked, setLiked] = useState(!!post.liked);
+  const [likeCount, setLikeCount] = useState(post.like_count || 0);
+  const [saved, setSaved] = useState(!!post.bookmarked);
   const [reposted, setReposted] = useState(false);
+  const [repostCount, setRepostCount] = useState(post.repost_count || 0);
+  const [toast, setToast] = useState('');
   const href = `/${(post.org?.slug) || post.author?.username || 'unknown'}/${post.slug}`;
-  const isOwn = !!post.can_edit; // author / org member — can't repost own
+  // Author / co-authors / org members can't repost their own blog.
+  const cannotRepost = !!(post.is_author || post.is_co_author || post.can_edit);
 
   const guard = (fn) => (e) => {
     e.preventDefault(); e.stopPropagation();
     if (!user) { window.location.href = '/sign-in?next=/'; return; }
     fn();
   };
-  const clap = guard(() => { setClaps(c => c + 1); fetch(`/api/blogs/${post.id}/clap`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ count: 1 }) }).then(r => r.ok ? r.json() : null).then(d => d && setClaps(d.totalClaps)).catch(() => {}); });
+  const like = guard(() => {
+    const was = liked; setLiked(!was); setLikeCount(c => Math.max(0, c + (was ? -1 : 1)));
+    fetch(`/api/blogs/${post.id}/like`, { method: 'POST' })
+      .then(r => r.ok ? r.json() : Promise.reject()).then(d => { setLiked(!!d.liked); setLikeCount(d.count || 0); })
+      .catch(() => { setLiked(was); setLikeCount(c => Math.max(0, c + (was ? 1 : -1))); });
+  });
+  const flashToast = (m) => { setToast(m); setTimeout(() => setToast(''), 2200); };
   const save = guard(() => {
     const was = saved; setSaved(!was);
     (was ? fetch(`/api/library/bookmarks/${post.id}`, { method: 'DELETE' })
          : fetch('/api/library/bookmarks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ blogId: post.id }) }))
-      .then(r => { if (!r.ok) throw new Error(); }).catch(() => setSaved(was));
+      .then(r => { if (!r.ok) throw new Error(); if (!was) flashToast('Saved to your reading list'); }).catch(() => setSaved(was));
   });
   const repost = guard(() => {
-    const was = reposted; setReposted(!was);
+    if (cannotRepost) return;
+    const was = reposted; setReposted(!was); setRepostCount(c => Math.max(0, c + (was ? -1 : 1)));
     fetch(`/api/blogs/${post.id}/repost`, { method: was ? 'DELETE' : 'POST' })
-      .then(r => r.ok ? r.json() : Promise.reject()).then(d => setReposted(!!d.reposted)).catch(() => setReposted(was));
+      .then(r => r.ok ? r.json() : Promise.reject()).then(d => { setReposted(!!d.reposted); setRepostCount(d.count || 0); })
+      .catch(() => { setReposted(was); setRepostCount(c => Math.max(0, c + (was ? 1 : -1))); });
   });
-
-  const Stat = ({ d, label, onClick, active, fill }) => (
-    <button onClick={onClick} title={label} className="flex items-center gap-1.5 text-[13px] transition-colors" style={{ color: active ? '#9b7bf7' : 'var(--text-muted)' }}>
-      <svg className="w-[18px] h-[18px]" fill={fill && active ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">{d}</svg>
-    </button>
-  );
 
   return (
     <div className="flex items-center gap-5 mt-3">
-      {/* claps */}
-      <button onClick={clap} className="flex items-center gap-1.5 text-[13px] transition-colors" style={{ color: 'var(--text-muted)' }} title="Clap">
-        <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round"><path d="M7 11v8m0 0H5a1 1 0 01-1-1v-6a1 1 0 011-1h2m3-4l-1 5h6l-1 5" /></svg>
-        {claps > 0 && <span>{claps >= 1000 ? `${(claps / 1000).toFixed(1)}K` : claps}</span>}
+      {/* like */}
+      <button onClick={like} className="flex items-center gap-1.5 text-[13px] transition-colors" style={{ color: liked ? '#f43f5e' : 'var(--text-muted)' }} title={liked ? 'Unlike' : 'Like'}>
+        <svg className="w-[18px] h-[18px]" fill={liked ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" /></svg>
+        {likeCount > 0 && <span>{likeCount >= 1000 ? `${(likeCount / 1000).toFixed(1)}K` : likeCount}</span>}
       </button>
       {/* comments */}
       <Link href={`${href}#comments`} className="flex items-center gap-1.5 text-[13px]" style={{ color: 'var(--text-muted)' }} title="Comments" onClick={e => e.stopPropagation()}>
         <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round"><path d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
         {post.comment_count > 0 && <span>{post.comment_count}</span>}
       </Link>
-      {/* repost — not for own blog */}
-      {!isOwn && (
-        <button onClick={repost} className="flex items-center gap-1.5 text-[13px] transition-colors" style={{ color: reposted ? '#16a34a' : 'var(--text-muted)' }} title="Repost">
-          <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round"><path d="M17 1l4 4-4 4" /><path d="M3 11V9a4 4 0 014-4h14" /><path d="M7 23l-4-4 4-4" /><path d="M21 13v2a4 4 0 01-4 4H3" /></svg>
-        </button>
-      )}
+      {/* repost — greyed/disabled on your own blog */}
+      <button
+        onClick={repost}
+        disabled={cannotRepost}
+        title={cannotRepost ? "You can't repost your own blog" : 'Repost'}
+        className="flex items-center gap-1.5 text-[13px] transition-colors"
+        style={{ color: reposted ? '#16a34a' : 'var(--text-muted)', opacity: cannotRepost ? 0.4 : 1, cursor: cannotRepost ? 'not-allowed' : 'pointer' }}
+      >
+        <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round"><path d="M17 1l4 4-4 4" /><path d="M3 11V9a4 4 0 014-4h14" /><path d="M7 23l-4-4 4-4" /><path d="M21 13v2a4 4 0 01-4 4H3" /></svg>
+        {repostCount > 0 && <span>{repostCount}</span>}
+      </button>
       <div className="ml-auto flex items-center gap-1">
         <button onClick={save} className="flex items-center justify-center w-8 h-8 rounded-full transition-colors" style={{ color: saved ? '#9b7bf7' : 'var(--text-faint)' }} title="Save to reading list" onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-hover)'} onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
           <ion-icon name={saved ? 'bookmark' : 'bookmark-outline'} style={{ fontSize: '18px' }} />
         </button>
         <FeedCardMenu post={post} onHide={onHide} />
       </div>
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9999] flex items-center gap-2 px-4 py-2.5 rounded-xl text-[13px] font-medium" style={{ backgroundColor: 'var(--text-primary)', color: 'var(--bg-app)', boxShadow: '0 8px 30px rgba(0,0,0,0.3)' }}>
+          <ion-icon name="bookmark" style={{ fontSize: '15px' }} /> {toast}
+        </div>
+      )}
     </div>
   );
 }
@@ -327,28 +352,38 @@ function FeedCard({ post, onHide }) {
     <article className="group py-6" style={{ borderBottom: '1px solid var(--divider)' }}>
       <Link href={href} className="flex gap-5 cursor-pointer">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-2 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-            <AuthorStack authors={allAuthors} />
-            <span className="truncate">
-              {post.org && <>In <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{post.org.name}</span> by </>}
-              <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{author.display_name || author.username}</span>
-              {allAuthors.length > 1 && <span style={{ color: 'var(--text-faint)' }}> +{allAuthors.length - 1}</span>}
-            </span>
-            {post.is_staff && (
-              <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded flex-shrink-0" style={{ backgroundColor: '#9b7bf718', color: '#9b7bf7', border: '1px solid #9b7bf730' }}>Staff</span>
-            )}
-          </div>
+          {(() => {
+            const names = allAuthors.slice(0, 3).map(a => a.display_name || a.username);
+            const moreN = allAuthors.length - names.length;
+            const namesStr = names.join(' and ') + (moreN > 0 ? ` + ${moreN} more` : '');
+            const dateStr = post.published_at ? new Date(post.published_at * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+            return (
+              <div className="flex items-center gap-2 mb-2 text-[14px]" style={{ color: 'var(--text-secondary)' }}>
+                <AuthorStack authors={allAuthors} />
+                <span className="truncate">
+                  {post.org && <>in <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{post.org.name}</span> </>}
+                  by <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{namesStr}</span>
+                  {dateStr && <span style={{ color: 'var(--text-faint)' }}> · {dateStr}</span>}
+                </span>
+                {post.is_staff && (
+                  <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded flex-shrink-0" style={{ backgroundColor: '#9b7bf718', color: '#9b7bf7', border: '1px solid #9b7bf730' }}>Staff</span>
+                )}
+              </div>
+            );
+          })()}
 
           <h2 className="text-[20px] font-extrabold leading-[1.25] mb-1 group-hover:opacity-80 transition-opacity tracking-[-0.01em]" style={{ color: 'var(--text-primary)', fontFamily: "'Source Serif 4', Georgia, serif" }}>
             {post.title || 'Untitled'}
           </h2>
           {post.subtitle && (
-            <p className="text-[15px] leading-[1.5] line-clamp-2 mb-2" style={{ color: 'var(--text-muted)' }}>{post.subtitle}</p>
+            <p className="text-[15px] font-medium leading-[1.5] line-clamp-1 mb-1" style={{ color: 'var(--text-muted)' }}>{post.subtitle}</p>
           )}
-          <div className="flex items-center gap-3 text-[12px]" style={{ color: 'var(--text-faint)' }}>
-            <span>{timeAgo(post.published_at)}</span>
+          {post.excerpt && (
+            <p className="text-[14px] leading-[1.55] line-clamp-2 mb-2" style={{ color: 'var(--text-faint)' }}>{post.excerpt}</p>
+          )}
+          <div className="flex items-center gap-3 text-[13px]" style={{ color: 'var(--text-faint)' }}>
             {(post.tags || []).slice(0, 1).map(tag => (
-              <span key={tag} className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-body)' }}>{tag}</span>
+              <span key={tag} className="text-[12px] px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-body)' }}>{tag}</span>
             ))}
             {post.read_time_minutes > 0 && <span>{post.read_time_minutes} min read</span>}
           </div>

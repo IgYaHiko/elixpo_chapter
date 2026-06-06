@@ -10,6 +10,7 @@ import BlogInteractionBar from '../components/BlogInteractionBar';
 import BlogComments from '../components/BlogComments';
 import BlogFollowCard, { FollowToggle } from '../components/BlogFollowButtons';
 import BlogRecommendations from '../components/BlogRecommendations';
+import BlogDotsMenu from '../components/BlogDotsMenu';
 import AuthorAttribution from '../components/AuthorAttribution';
 import FollowListModal from '../components/FollowListModal';
 import BlogInviteOverlay from '../components/BlogInviteOverlay';
@@ -84,6 +85,7 @@ function HandlePageInner({ path }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [followModal, setFollowModal] = useState(null); // 'followers' | 'following'
+  const [hideHighlights, setHideHighlights] = useState(false); // strip text colors/highlights
 
   // Parse: path[0] = name, path[1] = slug or collection, path[2] = slug (if collection)
   const name = (path?.[0] || '').toLowerCase();
@@ -91,12 +93,23 @@ function HandlePageInner({ path }) {
   const third = (path?.[2] || '').toLowerCase();
 
   // If 1 segment: profile. If 2: blog or collection listing. If 3: blog in collection.
+  // Special case: /<username>/reads/<list-slug> is a shared reading list.
+  const isReadingList = path?.length === 3 && second === 'reads';
   const isProfile = path?.length === 1;
   const slug = path?.length === 2 ? second : path?.length === 3 ? third : '';
   const collection = path?.length === 3 ? second : '';
 
   useEffect(() => {
     if (!name) { setLoading(false); setError('Not found'); return; }
+
+    if (isReadingList) {
+      fetch(`/api/library/public?username=${encodeURIComponent(name)}&slug=${encodeURIComponent(third)}`)
+        .then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || 'Not found'); }))
+        .then(d => setData({ type: 'readingList', ...d }))
+        .catch(e => setError(e.message))
+        .finally(() => setLoading(false));
+      return;
+    }
 
     const params = new URLSearchParams({ name });
     if (slug) params.set('slug', slug);
@@ -107,7 +120,7 @@ function HandlePageInner({ path }) {
       .then(d => setData(d))
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
-  }, [name, slug, collection]);
+  }, [name, slug, collection, isReadingList, third]);
 
   if (loading) {
     return (
@@ -160,7 +173,7 @@ function HandlePageInner({ path }) {
 
     return (
       <AppShell>
-        <div className="max-w-3xl mx-auto px-6 py-8">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 w-full overflow-x-hidden">
           {canEdit && (
             <div className="flex items-center justify-end mb-4">
               <Link
@@ -190,13 +203,31 @@ function HandlePageInner({ path }) {
             memberOnly={!!blog.member_only}
             featured={blog.published_as === `org:${STAFF_ORG_ID}`}
             publishedAt={blog.published_at}
+            hideHighlights={hideHighlights}
             followSlot={!isAuthor ? (
               <>
                 {data.owner?.type === 'org' && <FollowToggle kind="org" handle={data.owner.slug} compact />}
                 {blog.author_username && <FollowToggle kind="user" handle={blog.author_username} compact />}
               </>
             ) : null}
-            headerActions={<BlogInteractionBar blogId={blog.id} blogAuthorId={blog.author_id} canRepost={!isAuthor} />}
+            headerActions={
+              <BlogInteractionBar
+                blogId={blog.id}
+                blogAuthorId={blog.author_id}
+                canRepost={!isAuthor && !myCoRole}
+                dotsMenu={
+                  <BlogDotsMenu
+                    blogId={blog.id}
+                    authorId={blog.author_id}
+                    author={{ username: blog.author_username, display_name: blog.author_name }}
+                    org={data.owner?.type === 'org' ? { slug: data.owner.slug, name: data.owner.name, id: data.owner.id } : null}
+                    tags={blog.tags || []}
+                    hideHighlights={hideHighlights}
+                    onToggleHighlights={() => setHideHighlights(v => !v)}
+                  />
+                }
+              />
+            }
           />
 
           {/* End-of-blog follow card — author (+ org) */}
@@ -210,6 +241,59 @@ function HandlePageInner({ path }) {
 
           {/* More to read — related recommendations */}
           <BlogRecommendations blogId={blog.id} />
+        </div>
+      </AppShell>
+    );
+  }
+
+  // ── Shared reading list ──
+  if (data.type === 'readingList') {
+    const { owner, list, blogs = [] } = data;
+    return (
+      <AppShell>
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 w-full">
+          <div className="mb-8">
+            <div className="flex items-center gap-2 text-[13px] mb-3" style={{ color: 'var(--text-muted)' }}>
+              <Link href={`/${owner.username}`} className="flex items-center gap-1.5 hover:opacity-70 transition-opacity">
+                {owner.avatar_url
+                  ? <img src={owner.avatar_url} alt="" className="h-5 w-5 rounded-full object-cover" />
+                  : <span className="h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ backgroundColor: 'var(--bg-elevated)' }}>{(owner.display_name || owner.username || '?')[0].toUpperCase()}</span>}
+                <span style={{ color: 'var(--accent)' }}>{owner.display_name || owner.username}</span>
+              </Link>
+              <span style={{ color: 'var(--text-faint)' }}>/ reading list</span>
+            </div>
+            <h1 className="text-[28px] font-extrabold tracking-tight" style={{ color: 'var(--text-primary)' }}>{list.name}</h1>
+            {list.description && <p className="text-[15px] mt-2 leading-relaxed" style={{ color: 'var(--text-muted)' }}>{list.description}</p>}
+            <p className="text-[13px] mt-3" style={{ color: 'var(--text-faint)' }}>{blogs.length} post{blogs.length !== 1 ? 's' : ''}</p>
+            <div style={{ height: '1px', backgroundColor: 'var(--divider)', marginTop: '20px' }} />
+          </div>
+          {blogs.length > 0 ? (
+            <div>
+              {blogs.map(b => (
+                <Link key={b.id} href={`/${b.author_username}/${b.slug}`}>
+                  <article className="group flex gap-5 py-6 cursor-pointer" style={{ borderBottom: '1px solid var(--divider)' }}>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1.5 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+                        {b.author_avatar
+                          ? <img src={b.author_avatar} alt="" className="h-5 w-5 rounded-full object-cover" />
+                          : <span className="h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold" style={{ backgroundColor: 'var(--bg-elevated)' }}>{(b.author_name || b.author_username || '?')[0].toUpperCase()}</span>}
+                        <span>{b.author_name || b.author_username}</span>
+                      </div>
+                      <h2 className="text-[19px] font-extrabold leading-[1.3] mb-1 group-hover:opacity-80 transition-opacity" style={{ color: 'var(--text-primary)', fontFamily: "'Source Serif 4', Georgia, serif" }}>{b.title || 'Untitled'}</h2>
+                      {(b.subtitle || b.excerpt) && <p className="text-[14px] leading-[1.5] line-clamp-2" style={{ color: 'var(--text-faint)' }}>{b.subtitle || b.excerpt}</p>}
+                      {b.read_time_minutes > 0 && <p className="text-[12px] mt-2" style={{ color: 'var(--text-faint)' }}>{b.read_time_minutes} min read</p>}
+                    </div>
+                    <img src={b.cover_image_r2_key || generateBlogBanner(b.id || b.slug)} alt="" className="w-[100px] h-[100px] rounded-md object-cover flex-shrink-0 self-center hidden sm:block" style={{ backgroundColor: 'var(--bg-elevated)' }} />
+                  </article>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-20">
+              <ion-icon name="bookmark-outline" style={{ fontSize: '40px', color: 'var(--text-faint)' }} />
+              <p className="text-[15px] mt-4" style={{ color: 'var(--text-muted)' }}>This reading list is empty.</p>
+            </div>
+          )}
         </div>
       </AppShell>
     );

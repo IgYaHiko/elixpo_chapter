@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { getSession } from '../../../lib/auth';
 import { STAFF_ORG_ID } from '../../../lib/staff';
 
-const BLOG_FIELDS = `b.id, b.slug, b.title, b.subtitle, b.cover_image_r2_key, b.page_emoji,
+const BLOG_FIELDS = `b.id, b.slug, b.title, b.subtitle, b.excerpt, b.cover_image_r2_key, b.page_emoji,
   b.author_id, b.published_as, b.published_at, b.read_time_minutes,
   b.like_count, b.clap_total, b.comment_count, b.view_count`;
 
@@ -130,7 +130,7 @@ async function queryInterests(db, userId, now, limit) {
         SELECT blog_id FROM blog_tags WHERE tag IN (
           SELECT tag FROM user_interests WHERE user_id = ?
           UNION
-          SELECT DISTINCT tag FROM user_signals WHERE user_id = ? AND tag IS NOT NULL AND created_at > ?
+          SELECT DISTINCT tag FROM user_signals WHERE user_id = ? AND tag IS NOT NULL AND weight > 0 AND created_at > ?
         )
       )
       AND b.author_id != ?
@@ -301,20 +301,73 @@ async function enrichPosts(db, posts, userId) {
     orgMemberSet = new Set(memberRows.map(r => r.key));
   }
 
+  // Reshare counts for these posts (batched).
+  const repostMap = {};
+  if (blogIds.length) {
+    const ph = blogIds.map(() => '?').join(',');
+    const rows = await db.prepare(`SELECT blog_id, COUNT(*) AS c FROM reposts WHERE blog_id IN (${ph}) GROUP BY blog_id`).bind(...blogIds).all();
+    for (const r of (rows?.results || [])) repostMap[r.blog_id] = r.c;
+  }
+
+  // The viewer's like / bookmark / co-author state for these posts (batched).
+  let likedSet = new Set(), bookmarkedSet = new Set(), coAuthoredSet = new Set();
+  if (userId) {
+    const [likeRows, bmRows, caRows] = await Promise.all([
+      batchQuery(db, 'SELECT blog_id FROM likes WHERE user_id = ? AND blog_id IN', blogIds, [userId]),
+      batchQuery(db, 'SELECT blog_id FROM bookmarks WHERE user_id = ? AND blog_id IN', blogIds, [userId]),
+      batchQuery(db, "SELECT blog_id FROM blog_co_authors WHERE status = 'accepted' AND user_id = ? AND blog_id IN", blogIds, [userId]),
+    ]);
+    likedSet = new Set(likeRows.map(r => r.blog_id));
+    bookmarkedSet = new Set(bmRows.map(r => r.blog_id));
+    coAuthoredSet = new Set(caRows.map(r => r.blog_id));
+  }
+
+  // Lazily backfill excerpts for posts published before the excerpt column
+  // existed (compute once from content, write through).
+  const needEx = posts.filter(p => !p.excerpt);
+  if (needEx.length) {
+    try {
+      const ids = needEx.map(p => p.id);
+      const ph = ids.map(() => '?').join(',');
+      const rows = await db.prepare(`SELECT id, content FROM blogs WHERE id IN (${ph})`).bind(...ids).all();
+      const cmap = Object.fromEntries((rows?.results || []).map(r => [r.id, r.content]));
+      const { decompressBlogContent } = await import('../../../lib/compress');
+      const { excerptFromBlocks } = await import('../../../lib/excerpt');
+      const updates = [];
+      for (const p of needEx) {
+        try {
+          const raw = cmap[p.id];
+          if (!raw) continue;
+          let blocks = decompressBlogContent(raw);
+          if (typeof blocks === 'string') { try { blocks = JSON.parse(blocks); } catch { blocks = []; } }
+          const ex = excerptFromBlocks(Array.isArray(blocks) ? blocks : []);
+          if (ex) { p.excerpt = ex; updates.push(db.prepare('UPDATE blogs SET excerpt = ? WHERE id = ?').bind(ex, p.id)); }
+        } catch {}
+      }
+      if (updates.length) await db.batch(updates);
+    } catch {}
+  }
+
   return posts.map(p => {
     const isAuthor = userId && p.author_id === userId;
     const orgId = p.published_as?.startsWith('org:') ? p.published_as.replace('org:', '') : null;
     const isOrgMember = orgId && orgMemberSet.has(`${orgId}:${userId}`);
     const org = orgId ? orgMap[orgId] || null : null;
+    const coAuthors = coAuthorsMap[p.id] || [];
     return {
       ...p,
       author: authorMap[p.author_id] || { username: 'unknown', display_name: 'Unknown' },
       org: org ? { id: org.id, slug: org.slug, name: org.name, logo_url: org.logo_r2_key } : null,
-      co_authors: coAuthorsMap[p.id] || [],
-      co_author_count: (coAuthorsMap[p.id] || []).length,
+      co_authors: coAuthors,
+      co_author_count: coAuthors.length,
       tags: tagMap[p.id] || [],
       is_staff: p.published_as === `org:${STAFF_ORG_ID}`,
       can_edit: !!(isAuthor || isOrgMember),
+      is_author: !!isAuthor,
+      is_co_author: coAuthoredSet.has(p.id),
+      repost_count: repostMap[p.id] || 0,
+      liked: likedSet.has(p.id),
+      bookmarked: bookmarkedSet.has(p.id),
     };
   });
 }

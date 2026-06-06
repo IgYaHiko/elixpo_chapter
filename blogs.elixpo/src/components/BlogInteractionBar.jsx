@@ -8,22 +8,23 @@ import { useAuth } from '../context/AuthContext';
  * Handles: view recording, read progress, likes, claps, bookmarks, share.
  * Also reports dwell time as a taste signal.
  */
-export default function BlogInteractionBar({ blogId, blogAuthorId, canRepost = false }) {
+export default function BlogInteractionBar({ blogId, blogAuthorId, canRepost = false, dotsMenu = null }) {
   const { user } = useAuth();
   const [interactions, setInteractions] = useState(null);
   const [clapAnim, setClapAnim] = useState(false);
   const [reposted, setReposted] = useState(false);
   const [repostCount, setRepostCount] = useState(0);
 
-  // Repost state
+  // Repost state — always fetch the count (shown even on your own blog).
   useEffect(() => {
-    if (!blogId || !canRepost) return;
+    if (!blogId) return;
     fetch(`/api/blogs/${blogId}/repost`).then(r => r.ok ? r.json() : null).then(d => {
       if (!d) return; setReposted(!!d.reposted); setRepostCount(d.count || 0);
     }).catch(() => {});
-  }, [blogId, canRepost]);
+  }, [blogId]);
 
   const toggleRepost = () => {
+    if (!canRepost) return;
     if (!user) { window.location.href = `/sign-in?next=${typeof window !== 'undefined' ? window.location.pathname : '/'}`; return; }
     const was = reposted;
     setReposted(!was); setRepostCount(c => c + (was ? -1 : 1));
@@ -213,7 +214,7 @@ export default function BlogInteractionBar({ blogId, blogAuthorId, canRepost = f
   };
 
   return (
-    <div className="flex items-center justify-between py-4 mt-8" style={{ borderTop: '1px solid var(--divider)', borderBottom: '1px solid var(--divider)' }}>
+    <div className="flex items-center justify-between gap-x-1 gap-y-1 flex-wrap py-1">
       {/* Left — engagement actions */}
       <div className="flex items-center gap-1">
         {/* Like */}
@@ -256,18 +257,17 @@ export default function BlogInteractionBar({ blogId, blogAuthorId, canRepost = f
           {interactions.commentCount > 0 && <span>{fmt(interactions.commentCount)}</span>}
         </div>
 
-        {/* Repost — hidden for the author / co-authors */}
-        {canRepost && (
-          <button
-            onClick={toggleRepost}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-full text-[13px] font-medium transition-colors"
-            style={{ color: reposted ? '#16a34a' : 'var(--text-muted)', backgroundColor: reposted ? '#16a34a14' : 'transparent' }}
-            title={reposted ? 'Undo repost' : 'Repost to your followers'}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>
-            {repostCount > 0 && <span>{fmt(repostCount)}</span>}
-          </button>
-        )}
+        {/* Repost — greyed/disabled for the author and co-authors; count shows when > 0 */}
+        <button
+          onClick={toggleRepost}
+          disabled={!canRepost}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-full text-[13px] font-medium transition-colors"
+          style={{ color: reposted ? '#16a34a' : 'var(--text-muted)', backgroundColor: reposted ? '#16a34a14' : 'transparent', opacity: canRepost ? 1 : 0.4, cursor: canRepost ? 'pointer' : 'not-allowed' }}
+          title={!canRepost ? "You can't repost your own blog" : (reposted ? 'Undo repost' : 'Repost to your followers')}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>
+          {repostCount > 0 && <span>{fmt(repostCount)}</span>}
+        </button>
       </div>
 
       {/* Right — utility actions */}
@@ -322,29 +322,32 @@ export default function BlogInteractionBar({ blogId, blogAuthorId, canRepost = f
           )}
         </div>
 
-        {/* Report dropdown */}
-        <div className="relative" ref={reportRef}>
-          <button
-            onClick={() => !reported && setReportOpen(!reportOpen)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-full transition-all"
-            style={{ color: reported ? '#f87171' : 'var(--text-muted)' }}
-            title={reported ? 'Reported' : 'Report this post'}
-          >
-            <ion-icon name={reported ? 'flag' : 'flag-outline'} style={{ fontSize: '17px' }} />
-          </button>
-          {reportOpen && !reported && (
-            <div className="absolute bottom-full mb-2 right-0 w-[210px] rounded-xl shadow-xl z-50 overflow-hidden py-1" style={{ backgroundColor: 'var(--dropdown-bg)', border: '1px solid var(--dropdown-border)' }}>
-              <div className="px-4 py-2 text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--text-faint)' }}>Report for…</div>
-              {REPORT_REASONS.map(([value, label]) => (
-                <button key={value} onClick={() => submitReport(value)} className="w-full flex items-center px-4 py-2 text-[13px] transition-colors text-left" style={{ color: 'var(--text-secondary)' }}
-                  onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-hover)'}
-                  onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
-                  {label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        {/* "..." menu (report lives inside it) — falls back to the legacy report
+            dropdown when no dotsMenu is supplied. */}
+        {dotsMenu ? dotsMenu : (
+          <div className="relative" ref={reportRef}>
+            <button
+              onClick={() => !reported && setReportOpen(!reportOpen)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-full transition-all"
+              style={{ color: reported ? '#f87171' : 'var(--text-muted)' }}
+              title={reported ? 'Reported' : 'Report this post'}
+            >
+              <ion-icon name={reported ? 'flag' : 'flag-outline'} style={{ fontSize: '17px' }} />
+            </button>
+            {reportOpen && !reported && (
+              <div className="absolute bottom-full mb-2 right-0 w-[210px] rounded-xl shadow-xl z-50 overflow-hidden py-1" style={{ backgroundColor: 'var(--dropdown-bg)', border: '1px solid var(--dropdown-border)' }}>
+                <div className="px-4 py-2 text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--text-faint)' }}>Report for…</div>
+                {REPORT_REASONS.map(([value, label]) => (
+                  <button key={value} onClick={() => submitReport(value)} className="w-full flex items-center px-4 py-2 text-[13px] transition-colors text-left" style={{ color: 'var(--text-secondary)' }}
+                    onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-hover)'}
+                    onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
