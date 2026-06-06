@@ -2,8 +2,9 @@
 
 import { isAllowedImage } from '../../utils/allowedImageTypes';
 import { BlockNoteSchema, defaultBlockSpecs, defaultInlineContentSpecs, createCodeBlockSpec } from '@blocknote/core';
-import { useCreateBlockNote, SuggestionMenuController, getDefaultReactSlashMenuItems, TableHandlesController, FormattingToolbarController, FormattingToolbar, getFormattingToolbarItems, CreateLinkButton, useBlockNoteEditor, useEditorSelectionChange } from '@blocknote/react';
+import { useCreateBlockNote, SuggestionMenuController, getDefaultReactSlashMenuItems, TableHandlesController, FormattingToolbarController, FormattingToolbar, getFormattingToolbarItems, CreateLinkButton, ColorStyleButton, useBlockNoteEditor, useEditorSelectionChange } from '@blocknote/react';
 import { BlockNoteView } from '@blocknote/mantine';
+import { createPortal } from 'react-dom';
 import '@blocknote/core/fonts/inter.css';
 import '@blocknote/mantine/style.css';
 import '../../styles/katex-fonts.css';
@@ -31,6 +32,7 @@ import { DateInline } from './blocks/DateInline';
 import { MentionInline } from './blocks/MentionInline';
 import { BlogMentionInline } from './blocks/BlogMentionInline';
 import { OrgMentionInline } from './blocks/OrgMentionInline';
+import { InlineButton } from './blocks/InlineButton';
 
 // AI features (space-to-AI menu, AI block, AI selection toolbar, AI image gen)
 // are temporarily disabled and surfaced as "Coming soon". Flip to re-enable.
@@ -108,6 +110,7 @@ const schema = BlockNoteSchema.create({
     mention: MentionInline,
     blogMention: BlogMentionInline,
     orgMention: OrgMentionInline,
+    inlineButton: InlineButton,
   },
 });
 
@@ -149,6 +152,119 @@ function Icon({ d, d2, color }) {
       <path d={d} />
       {d2 && <path d={d2} />}
     </svg>
+  );
+}
+
+// ── Text-color & highlight toolbar buttons (#14) ──
+// Two dedicated buttons on the selection toolbar (text color + a separate
+// highlight). Text colors are hex values mapped in base.css (so green is real
+// green, not BlockNote's named-color grey); highlights are translucent rgba so
+// they read like a marker, not a solid fill.
+const TEXT_COLORS = [
+  { label: 'Default', value: 'default' },
+  { label: 'White', value: '#ffffff' },
+  { label: 'Gray', value: '#9ca3af' },
+  { label: 'Red', value: '#f87171' },
+  { label: 'Orange', value: '#fb923c' },
+  { label: 'Yellow', value: '#fbbf24' },
+  { label: 'Green', value: '#4ade80' },
+  { label: 'Blue', value: '#60a5fa' },
+  { label: 'Purple', value: '#a78bfa' },
+  { label: 'Pink', value: '#f472b6' },
+];
+const HIGHLIGHT_COLORS = [
+  { label: 'None', value: 'default' },
+  { label: 'Gray', value: 'rgba(156,163,175,0.25)' },
+  { label: 'Red', value: 'rgba(248,113,113,0.25)' },
+  { label: 'Orange', value: 'rgba(251,146,60,0.25)' },
+  { label: 'Yellow', value: 'rgba(251,191,36,0.25)' },
+  { label: 'Green', value: 'rgba(74,222,128,0.25)' },
+  { label: 'Blue', value: 'rgba(96,165,250,0.25)' },
+  { label: 'Purple', value: 'rgba(167,139,250,0.25)' },
+  { label: 'Pink', value: 'rgba(244,114,182,0.25)' },
+];
+
+function ToolbarStyleButton({ editor, kind }) {
+  const isText = kind === 'text';
+  const palette = isText ? TEXT_COLORS : HIGHLIGHT_COLORS;
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const btnRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (e.target.closest('.toolbar-color-popover')) return;
+      if (btnRef.current && btnRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  const toggle = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) setPos({ top: r.bottom + 6, left: r.left });
+    setOpen((o) => !o);
+  };
+
+  const apply = (e, value) => {
+    e.preventDefault();
+    try {
+      editor.focus();
+      const key = isText ? 'textColor' : 'backgroundColor';
+      if (value === 'default') editor.removeStyles({ [key]: '' });
+      else editor.addStyles({ [key]: value });
+      // Drop the selection so the applied color/highlight is visible.
+      setTimeout(() => window.getSelection()?.removeAllRanges(), 50);
+    } catch (err) { console.error('Failed to apply style:', err); }
+    setOpen(false);
+  };
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        className={`bn-button ${isText ? 'toolbar-color-btn' : 'toolbar-highlight-btn'}`}
+        title={isText ? 'Text color' : 'Highlight'}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={toggle}
+      >
+        {isText ? (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 20h16" /><path d="M7 16l5-12 5 12" /><path d="M9.5 11h5" /></svg>
+        ) : (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
+        )}
+        <span className="toolbar-color-indicator" style={{ background: isText ? '#e0e0e0' : '#fbbf24' }} />
+      </button>
+      {open && createPortal(
+        <div
+          className="toolbar-color-popover"
+          style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 10001 }}
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          <div className="toolbar-color-popover-label">{isText ? 'Text Color' : 'Highlight'}</div>
+          <div className="toolbar-color-grid">
+            {palette.map((c) => (
+              <button
+                key={c.value}
+                type="button"
+                className="toolbar-color-swatch"
+                title={c.label}
+                style={c.value === 'default'
+                  ? { background: 'transparent', border: '1.5px dashed #6b7a8d' }
+                  : { background: c.value }}
+                onMouseDown={(e) => apply(e, c.value)}
+              />
+            ))}
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }
 
@@ -218,14 +334,9 @@ function getCustomSlashMenuItems(editor, callbacks = {}) {
       icon: <Icon d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" d2="M3 3h18v18H3z M8.5 10a1.5 1.5 0 100-3 1.5 1.5 0 000 3z M21 15l-5-5L5 21" />,
       onItemClick: () => editor.insertBlocks([{ type: 'image', props: { url: '' } }], editor.getTextCursorPosition().block, 'after'),
     },
-    {
-      title: 'Table of Contents',
-      subtext: 'Auto-generated page outline',
-      group: 'Custom Blocks',
-      aliases: ['toc', 'outline', 'contents', 'navigation'],
-      icon: <Icon d="M3 12h18M3 6h18M3 18h12" />,
-      onItemClick: () => editor.insertBlocks([{ type: 'tableOfContents' }], editor.getTextCursorPosition().block, 'after'),
-    },
+    // Table of Contents is no longer insertable — the floating TOC is rendered
+    // automatically at the top-right of every blog. The `tableOfContents` block
+    // spec stays mounted for backward compat with already-saved blogs (#19).
     {
       title: 'Block Equation',
       subtext: 'Render LaTeX as a block',
@@ -252,7 +363,7 @@ function getCustomSlashMenuItems(editor, callbacks = {}) {
     },
     {
       title: 'Sub Page',
-      subtext: 'Nested page within this blog',
+      subtext: 'Nested page within this blog (max 2 per blog)',
       group: 'Custom Blocks',
       aliases: ['subpage', 'sub page', 'tabs', 'nested', 'page in page', 'child page'],
       icon: <Icon d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" d2="M14 2v6h6M16 13H8M16 17H8" />,
@@ -358,28 +469,8 @@ function getCustomSlashMenuItems(editor, callbacks = {}) {
         if (title && slugid) editor.insertInlineContent([{ type: 'blogMention', props: { title, slugid } }]);
       },
     },
-    {
-      title: 'Text Color',
-      subtext: 'Change text color',
-      group: 'Styling',
-      aliases: ['color', 'text color', 'font color'],
-      icon: <Icon d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" color="#f87171" />,
-      onItemClick: () => {
-        const color = prompt('Color (e.g. red, #ff0000):');
-        if (color) editor.addStyles({ textColor: color });
-      },
-    },
-    {
-      title: 'Background Color',
-      subtext: 'Change text background color',
-      group: 'Styling',
-      aliases: ['highlight', 'bg color', 'background'],
-      icon: <Icon d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" color="#fbbf24" />,
-      onItemClick: () => {
-        const color = prompt('Background color (e.g. yellow, #ffff00):');
-        if (color) editor.addStyles({ backgroundColor: color });
-      },
-    },
+    // Text color / background are set from the selection (formatting) toolbar,
+    // not the slash menu (#14). The prompt()-based slash items were removed.
   ];
 
   return [...defaults, ...customBlocks, ...inlineItems];
@@ -615,6 +706,7 @@ function doSanitize(blocks) {
 
 const BlogEditor = forwardRef(function BlogEditor({ onChange, initialContent, onReady, onTitleChange, blogId, collaboration, onCollabSeeded }, ref) {
   const { isDark } = useTheme();
+  const [pageMenu, setPageMenu] = useState(null); // {x,y} for the right-click page menu (#21)
   const [showMentionMenu, setShowMentionMenu] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
   const [mentionPos, setMentionPos] = useState({ top: 0, left: 0 });
@@ -945,11 +1037,69 @@ const BlogEditor = forwardRef(function BlogEditor({ onChange, initialContent, on
         const [, force] = useReducer((x) => x + 1, 0);
         useEditorSelectionChange(() => force(), ed);
         const link = analyzeLinkSelection(ed);
-        const items = getFormattingToolbarItems().filter((el) => el.type !== CreateLinkButton);
+        // Drop the default combined color button — we provide separate text-color
+        // and highlight buttons (#14).
+        const items = getFormattingToolbarItems().filter(
+          (el) => el.type !== CreateLinkButton && el.type !== ColorStyleButton,
+        );
         return (
           <FormattingToolbar>
             {items}
-            {link.kind === 'none' && <CreateLinkButton key="createLink" />}
+            {/* Convert the selection into an inline button (#22). */}
+            {link.kind === 'none' && (
+              <button
+                key="makeButton"
+                type="button"
+                className="bn-button"
+                title="Make button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  const text = (ed.getSelectedText?.() || '').trim();
+                  ed.insertInlineContent([{ type: 'inlineButton', props: { label: text || 'Button', href: '' } }]);
+                }}
+                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28 }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="8" width="18" height="8" rx="2" /><path d="M8 12h8" /></svg>
+              </button>
+            )}
+            <ToolbarStyleButton key="textColor" editor={ed} kind="text" />
+            <ToolbarStyleButton key="highlight" editor={ed} kind="highlight" />
+            {/* Create link via the custom editor so the selected text is wrapped
+                as the link's label (#12) — same flow as the Ctrl+K shortcut. */}
+            {link.kind === 'none' && (
+              <button
+                key="createLink"
+                type="button"
+                className="bn-button bn-link-edit-btn"
+                title="Create link (Ctrl+K)"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  try {
+                    const t = ed._tiptapEditor;
+                    const { from, to } = link;
+                    if (from == null || to == null) return;
+                    const text = t.state.doc.textBetween(from, to);
+                    const isUrl = /^https?:\/\/\S+$/.test(text.trim());
+                    let coords;
+                    try { coords = t.view.coordsAtPos(from); } catch { coords = { bottom: 120, left: 120 }; }
+                    setLinkEditor({
+                      anchorText: text,
+                      url: isUrl ? text.trim() : 'https://',
+                      from, to,
+                      top: coords.bottom + 6,
+                      left: Math.max(8, Math.min(coords.left, window.innerWidth - 340)),
+                    });
+                  } catch {}
+                }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '0 8px', height: 28, fontSize: 13, fontWeight: 500 }}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
+                  <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+                </svg>
+                Link
+              </button>
+            )}
             {link.kind === 'full' && (
               <button
                 key="editLink"
@@ -1039,8 +1189,8 @@ const BlogEditor = forwardRef(function BlogEditor({ onChange, initialContent, on
         const code = (block.content || []).map(c => c.text || '').join('');
         return !code.trim();
       }
-      // For paragraph/heading: empty text
-      if (type === 'paragraph' || type === 'heading') {
+      // Paragraph / heading / list items: empty when there's no text content.
+      if (type === 'paragraph' || type === 'heading' || type === 'bulletListItem' || type === 'numberedListItem' || type === 'checkListItem') {
         if (!block.content || block.content.length === 0) return true;
         if (block.content.length === 1 && block.content[0].type === 'text' && !block.content[0].text) return true;
         return false;
@@ -1103,6 +1253,21 @@ const BlogEditor = forwardRef(function BlogEditor({ onChange, initialContent, on
 
       if (e.key === 'Backspace') {
         if (!block) return; // let BlockNote / browser handle when no block context
+
+        // Backspace on an empty NESTED list item → outdent one level (keep the
+        // bullet) instead of letting it collapse to a plain line (#13).
+        const LIST_TYPES = new Set(['bulletListItem', 'numberedListItem', 'checkListItem']);
+        if (LIST_TYPES.has(block.type) && isBlockEmpty(block)) {
+          try {
+            if (editor.canUnnestBlock?.()) {
+              e.preventDefault();
+              e.stopPropagation();
+              editor.unnestBlock();
+              return;
+            }
+          } catch {}
+          // Top-level empty list item → fall through to BlockNote's default.
+        }
 
         // Convert empty heading to paragraph
         if (block.type === 'heading' && isBlockEmpty(block)) {
@@ -2479,7 +2644,17 @@ const BlogEditor = forwardRef(function BlogEditor({ onChange, initialContent, on
   }, [editor, getAiBlockIds, highlightAiBlocks, getFullBlogContext, blogId, handleAIKeep, aiMenuPos, hideSparkle, onTitleChange, replaceImagePlaceholder]);
 
   return (
-    <div className={`blog-editor-wrapper${aiGenerating ? ' ai-editor-locked' : ''}`} ref={wrapperRef} style={{ position: 'relative' }}>
+    <div
+      className={`blog-editor-wrapper${aiGenerating ? ' ai-editor-locked' : ''}`}
+      ref={wrapperRef}
+      style={{ position: 'relative' }}
+      onContextMenu={(e) => {
+        // Keep native menus on links/inputs/toolbars; otherwise show ours (#21).
+        if (e.target.closest('a, input, textarea, button, .bn-link-toolbar, [data-content-type="codeBlock"]')) return;
+        e.preventDefault();
+        setPageMenu({ x: Math.min(e.clientX, window.innerWidth - 230), y: Math.min(e.clientY, window.innerHeight - 320) });
+      }}
+    >
       <BlockNoteView
         editor={editor}
         onChange={handleChange}
@@ -2495,6 +2670,41 @@ const BlogEditor = forwardRef(function BlogEditor({ onChange, initialContent, on
         <FormattingToolbarController formattingToolbar={LinkAwareFormattingToolbar} />
         <TableHandlesController />
       </BlockNoteView>
+
+      {/* Page context menu (#21) — quick block inserts on right-click */}
+      {pageMenu && (
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onMouseDown={() => setPageMenu(null)} onContextMenu={(e) => { e.preventDefault(); setPageMenu(null); }} />
+          <div className="page-context-menu" style={{ position: 'fixed', top: pageMenu.y, left: pageMenu.x, zIndex: 91 }}>
+            {[
+              { label: 'Heading', type: 'heading', props: { level: 2 }, d: 'M6 4v16M18 4v16M6 12h12' },
+              { label: 'Bullet list', type: 'bulletListItem', d: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01' },
+              { label: 'Image', type: 'image', props: { url: '' }, d: 'M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M3 3h18v18H3z M21 15l-5-5L5 21' },
+              { label: 'Table', type: 'table', d: 'M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18' },
+              { label: 'Code block', type: 'codeBlock', d: 'M16 18l6-6-6-6M8 6l-6 6 6 6' },
+              { label: 'Quote', type: 'quote', d: 'M3 21c3 0 7-1 7-8V5H3v7h4M14 21c3 0 7-1 7-8V5h-7v7h4' },
+              { label: 'Divider', type: 'divider', d: 'M3 12h18' },
+            ].map((it) => (
+              <button
+                key={it.label}
+                type="button"
+                className="page-context-menu-item"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  try {
+                    const cur = editor.getTextCursorPosition().block;
+                    editor.insertBlocks([{ type: it.type, ...(it.props ? { props: it.props } : {}) }], cur, 'after');
+                  } catch {}
+                  setPageMenu(null);
+                }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={it.d} /></svg>
+                {it.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* @ Mention menu */}
       {showMentionMenu && mentionQuery && (
