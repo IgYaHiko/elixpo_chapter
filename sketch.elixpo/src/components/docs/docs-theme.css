@@ -17,38 +17,67 @@
  *   --color-border-light    #3a3a50
  */
 
-.lix-sketch-theme [data-color-scheme="dark"],
-.lix-sketch-theme.bn-container,
-.lix-sketch-theme .bn-container,
-.lix-sketch-theme [data-color-scheme] {
-  /* Editor surfaces */
-  --bn-colors-editor-background: #1a1a20;
-  --bn-colors-editor-text: #ffffff;
-  --bn-colors-menu-background: #232329;
-  --bn-colors-menu-text: #e8e8ee;
-  --bn-colors-tooltip-background: #1e1e28;
-  --bn-colors-tooltip-text: #ffffff;
+/* DARK theme overrides — pinned to `body.canvas-mode.theme-dark` so the
+ * dark BlockNote skin only applies when the canvas itself is dark. */
+body.canvas-mode.theme-dark .lix-sketch-theme [data-color-scheme="dark"],
+body.canvas-mode.theme-dark .lix-sketch-theme.bn-container,
+body.canvas-mode.theme-dark .lix-sketch-theme .bn-container,
+body.canvas-mode.theme-dark .lix-sketch-theme [data-color-scheme] {
+  /* Editor surfaces — mapped to the softened dark tokens. */
+  --bn-colors-editor-background: #20202a;
+  --bn-colors-editor-text: #f0f0f5;
+  --bn-colors-menu-background: #25252f;
+  --bn-colors-menu-text: #d8d8e0;
+  --bn-colors-tooltip-background: #292932;
+  --bn-colors-tooltip-text: #f0f0f5;
 
-  /* Hover / selected */
-  --bn-colors-hovered-background: #343448;
-  --bn-colors-hovered-text: #ffffff;
+  --bn-colors-hovered-background: #35354a;
+  --bn-colors-hovered-text: #f0f0f5;
   --bn-colors-selected-background: #5B57D1;
   --bn-colors-selected-text: #ffffff;
 
-  /* Disabled / placeholder text */
-  --bn-colors-disabled-background: #1a1a20;
-  --bn-colors-disabled-text: #6b6b80;
+  --bn-colors-disabled-background: #20202a;
+  --bn-colors-disabled-text: #92929e;
 
-  /* Side menu / chevron / drag handle */
-  --bn-colors-side-menu: #6b6b80;
+  --bn-colors-side-menu: #92929e;
 
-  /* Borders + shadows */
-  --bn-colors-border: #3a3a50;
+  --bn-colors-border: #3e3e52;
   --bn-colors-shadow: rgba(0, 0, 0, 0.4);
 
-  /* Highlight palette tweaks (optional — keep BlockNote defaults if these break) */
   --bn-colors-highlights-blue-background: rgba(91, 87, 209, 0.18);
   --bn-colors-highlights-blue-text: #aeacff;
+}
+
+/* LIGHT theme overrides — kick in whenever the canvas is in (default)
+ * light mode. Without these, BlockNote keeps its hardcoded dark surfaces
+ * regardless of the LixThemeProvider value, leaving a black docs panel
+ * next to a cream canvas. Tokens map to the same warm off-white the
+ * canvas + chrome use. */
+body.canvas-mode:not(.theme-dark) .lix-sketch-theme [data-color-scheme],
+body.canvas-mode:not(.theme-dark) .lix-sketch-theme.bn-container,
+body.canvas-mode:not(.theme-dark) .lix-sketch-theme .bn-container {
+  --bn-colors-editor-background: #f4f3ee;
+  --bn-colors-editor-text: #38384e;
+  --bn-colors-menu-background: #fbfaf6;
+  --bn-colors-menu-text: #38384e;
+  --bn-colors-tooltip-background: #fbfaf6;
+  --bn-colors-tooltip-text: #38384e;
+
+  --bn-colors-hovered-background: #eceae3;
+  --bn-colors-hovered-text: #38384e;
+  --bn-colors-selected-background: #5B57D1;
+  --bn-colors-selected-text: #ffffff;
+
+  --bn-colors-disabled-background: #f4f3ee;
+  --bn-colors-disabled-text: #80808f;
+
+  --bn-colors-side-menu: #80808f;
+
+  --bn-colors-border: #d6d4ca;
+  --bn-colors-shadow: rgba(60, 60, 80, 0.12);
+
+  --bn-colors-highlights-blue-background: rgba(91, 87, 209, 0.14);
+  --bn-colors-highlights-blue-text: #5B57D1;
 }
 
 /* The wrapper that BlockNote renders inside our flex column.
@@ -175,29 +204,44 @@
   width: 100%;
 }
 
-/* Block hover background */
-.lix-sketch-theme .bn-block-outer:hover > .bn-block {
-  background: rgba(52, 52, 72, 0.35);
+/* Block hover background — light by default, dark variant pinned to
+ * the dark theme. Old rule used a hardcoded `rgba(52,52,72,0.35)` which
+ * read as a black smudge on the light canvas. */
+body.canvas-mode:not(.theme-dark) .lix-sketch-theme .bn-block-outer:hover > .bn-block {
+  background: rgba(60, 60, 80, 0.06);
+  border-radius: 6px;
+}
+body.canvas-mode.theme-dark .lix-sketch-theme .bn-block-outer:hover > .bn-block {
+  background: rgba(255, 255, 255, 0.05);
   border-radius: 6px;
 }
 
-/* Slash / formatting menus */
-.lix-sketch-theme .mantine-Menu-dropdown,
-.lix-sketch-theme .mantine-Popover-dropdown,
-.lix-sketch-theme .bn-suggestion-menu {
-  background: #1e1e28 !important;
-  color: #ffffff !important;
-  border: 1px solid #3a3a50 !important;
+/* Slash / formatting menus — same theme split. */
+body.canvas-mode.theme-dark .lix-sketch-theme .mantine-Menu-dropdown,
+body.canvas-mode.theme-dark .lix-sketch-theme .mantine-Popover-dropdown,
+body.canvas-mode.theme-dark .lix-sketch-theme .bn-suggestion-menu {
+  background: #292932 !important;
+  color: #f0f0f5 !important;
+  border: 1px solid #3e3e52 !important;
+}
+body.canvas-mode:not(.theme-dark) .lix-sketch-theme .mantine-Menu-dropdown,
+body.canvas-mode:not(.theme-dark) .lix-sketch-theme .mantine-Popover-dropdown,
+body.canvas-mode:not(.theme-dark) .lix-sketch-theme .bn-suggestion-menu {
+  background: #fbfaf6 !important;
+  color: #38384e !important;
+  border: 1px solid #d6d4ca !important;
 }
 
 /* Mantine dropdowns render in a portal at <body> level — they ignore the
-   editor wrapper's width. Cap the formatting/link toolbars (which are
-   horizontal) tightly, but give the slash suggestion menu room to lay
-   out its multi-line items (icon + title + subtitle + shortcut hint). */
+   editor wrapper's width. Give the formatting/link toolbars room: the
+   old 360px cap was clipping the rightmost buttons (color, link, etc.)
+   to ~95% of their natural width. The suggestion menu gets even more
+   room to lay out its multi-line items (icon + title + subtitle +
+   shortcut hint). */
 .mantine-Popover-dropdown,
 .bn-link-toolbar,
 .bn-formatting-toolbar {
-  max-width: min(360px, 90vw) !important;
+  max-width: min(560px, 96vw) !important;
 }
 
 .bn-suggestion-menu,
@@ -219,14 +263,24 @@
   max-width: 100%;
 }
 
-/* Floating toolbar buttons */
-.lix-sketch-theme .mantine-ActionIcon-root,
-.lix-sketch-theme .mantine-Button-root {
-  color: #e8e8ee;
+/* Floating toolbar buttons — light by default, dark variant under
+ * the dark theme so the buttons stay readable on the right surface. */
+body.canvas-mode:not(.theme-dark) .lix-sketch-theme .mantine-ActionIcon-root,
+body.canvas-mode:not(.theme-dark) .lix-sketch-theme .mantine-Button-root {
+  color: #38384e;
 }
-.lix-sketch-theme .mantine-ActionIcon-root:hover,
-.lix-sketch-theme .mantine-Button-root:hover {
-  background: #343448;
+body.canvas-mode:not(.theme-dark) .lix-sketch-theme .mantine-ActionIcon-root:hover,
+body.canvas-mode:not(.theme-dark) .lix-sketch-theme .mantine-Button-root:hover {
+  background: #eceae3;
+  color: #1a1a2e;
+}
+body.canvas-mode.theme-dark .lix-sketch-theme .mantine-ActionIcon-root,
+body.canvas-mode.theme-dark .lix-sketch-theme .mantine-Button-root {
+  color: #d8d8e0;
+}
+body.canvas-mode.theme-dark .lix-sketch-theme .mantine-ActionIcon-root:hover,
+body.canvas-mode.theme-dark .lix-sketch-theme .mantine-Button-root:hover {
+  background: #35354a;
   color: #ffffff;
 }
 
