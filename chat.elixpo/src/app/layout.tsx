@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Toaster } from "sonner";
 import { AuthProvider } from "@/components/AuthProvider";
-import "./globals.css";
+import "./global.css";
 
 export const metadata: Metadata = {
   title: "Elixpo Chat",
